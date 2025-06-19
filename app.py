@@ -2,6 +2,9 @@ import os
 import json
 import uuid
 import traceback
+import eventlet # Import eventlet
+eventlet.monkey_patch() # Patch standard libraries for async compatibility
+
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -9,7 +12,8 @@ import ollama
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app)
+# Initialize SocketIO with async_mode='eventlet'
+socketio = SocketIO(app, async_mode='eventlet')
 
 # --- Configuration ---
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -65,6 +69,7 @@ def handle_get_chats(data):
 
     chat_files = [f for f in os.listdir(user_dir) if f.endswith('.json')]
     chats = []
+    # Sort by modification time to get the most recent chats first
     for filename in sorted(chat_files, key=lambda f: os.path.getmtime(os.path.join(user_dir, f)), reverse=True):
         chat_id = os.path.splitext(filename)[0]
         history = load_chat_history(user_id, chat_id)
@@ -99,7 +104,7 @@ def handle_message(data):
     user_id, chat_id, user_message = data.get('userId'), data.get('chatId'), data.get('message')
     history = load_chat_history(user_id, chat_id)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
-    
+
     history.append({'role': 'user', 'content': user_message})
     save_chat_history(user_id, chat_id, history)
 
@@ -118,7 +123,7 @@ def handle_message(data):
             socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
             if first_chunk:
                 first_chunk = False
-        
+
         history.append({'role': 'assistant', 'content': ai_response_content})
         save_chat_history(user_id, chat_id, history)
 
@@ -130,4 +135,5 @@ def handle_message(data):
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
         os.makedirs(CHAT_SESSIONS_DIR)
-    socketio.run(app, host="0.0.0.0", debug=True)
+    # The socketio.run command will now use eventlet automatically
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
