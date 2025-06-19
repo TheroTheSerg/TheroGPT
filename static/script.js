@@ -40,72 +40,73 @@ document.addEventListener('DOMContentLoaded', () => {
         type();
     }
 
-    // --- Chat Management Functions ---
-    function loadChats() {
-        socket.emit('get_chats', { userId });
+    // --- Chat Management ---
+    function addChatItemToSidebar(chat, prepend = false) {
+        const listItem = document.createElement('li');
+        listItem.dataset.chatId = chat.id;
+        listItem.classList.add('chat-list-item');
+
+        const chatLink = document.createElement('a');
+        chatLink.href = '#';
+        chatLink.textContent = chat.title;
+        listItem.appendChild(chatLink);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.innerHTML = '&times;';
+        deleteButton.classList.add('delete-chat-button');
+        deleteButton.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm('Are you sure you want to delete this chat?')) {
+                socket.emit('delete_chat', { userId, chatId: chat.id });
+            }
+        };
+        listItem.appendChild(deleteButton);
+        
+        listItem.addEventListener('click', () => switchChat(chat.id));
+
+        if (prepend) {
+            chatList.prepend(listItem);
+        } else {
+            chatList.appendChild(listItem);
+        }
     }
 
     function renderChatList(chats) {
         chatList.innerHTML = '';
-        chats.forEach(chat => {
-            const listItem = document.createElement('li');
-            listItem.dataset.chatId = chat.id;
-            listItem.classList.add('chat-list-item');
-            if (chat.id === currentChatId) {
-                listItem.classList.add('active');
-            }
-
-            const chatLink = document.createElement('a');
-            chatLink.href = '#';
-            chatLink.textContent = chat.title;
-            listItem.appendChild(chatLink);
-
-            const deleteButton = document.createElement('button');
-            deleteButton.innerHTML = '&times;';
-            deleteButton.classList.add('delete-chat-button');
-            deleteButton.onclick = (e) => {
-                e.stopPropagation();
-                if (confirm('Are you sure you want to delete this chat?')) {
-                    socket.emit('delete_chat', { userId, chatId: chat.id });
-                }
-            };
-            listItem.appendChild(deleteButton);
-            
-            listItem.addEventListener('click', () => {
-                switchChat(chat.id);
-            });
-            chatList.appendChild(listItem);
-        });
+        chats.forEach(chat => addChatItemToSidebar(chat));
     }
 
     function switchChat(chatId) {
-        if (chatId === currentChatId) return;
+        if (chatId === currentChatId && chatContainer.innerHTML !== '') return;
         
         currentChatId = chatId;
         chatContainer.innerHTML = '';
         showTypingIndicator(false);
-        updateActiveChatInList();
-        socket.emit('get_history', { userId, chatId });
-    }
-
-    function updateActiveChatInList() {
+        
         document.querySelectorAll('#chat-list li').forEach(item => {
             item.classList.toggle('active', item.dataset.chatId === currentChatId);
         });
+        
+        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
+        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Chat";
+
+        socket.emit('get_history', { userId, chatId });
     }
 
     // --- Event Listeners ---
     messageForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const message = messageInput.value.trim();
-        if (message && currentChatId) {
+        if (!currentChatId) {
+            alert("Please select a chat or create a new one first.");
+            return;
+        }
+        if (message) {
             addMessage(message, 'user');
             socket.emit('message', { userId, chatId: currentChatId, message });
             messageInput.value = '';
             showTypingIndicator(true);
             currentAiBubble = null;
-        } else if (!currentChatId) {
-            alert("Please select a chat or create a new one first.");
         }
     });
 
@@ -116,55 +117,68 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Socket.IO Event Handlers ---
     socket.on('connect', () => {
         console.log('Connected to server!');
-        loadChats();
+        socket.emit('get_chats', { userId });
     });
 
     socket.on('chat_list', (data) => {
         renderChatList(data.chats);
-        if (!currentChatId && data.chats.length > 0) {
-            switchChat(data.chats[0].id);
-        } else if (data.chats.length === 0) {
-            // If no chats, create one automatically
+        if (data.chats.length > 0) {
+            // Switch to the most recent chat if none is selected
+            if (!currentChatId) {
+                switchChat(data.chats[0].id);
+            }
+        } else {
+            // If there are no chats, create a new one
             socket.emit('new_chat', { userId });
         }
     });
     
     socket.on('chat_history', (data) => {
+        if (data.chatId !== currentChatId) return;
         chatContainer.innerHTML = '';
         data.history.forEach(msg => {
             addMessage(msg.content, msg.role);
         });
-        const activeChat = document.querySelector(`.chat-list-item[data-chat-id="${data.chatId}"] a`);
-        chatTitle.textContent = activeChat ? activeChat.textContent : "Chat";
+        scrollToBottom();
     });
-
-    socket.on('chat_created', (data) => {
-        const newChatItem = document.createElement('li');
-        newChatItem.dataset.chatId = data.chatId;
-        newChatItem.textContent = data.title;
-        // For simplicity, just reload the list.
-        loadChats();
-        switchChat(data.chatId);
+    
+    // --- FIX: Simplified chat creation logic ---
+    socket.on('chat_created', (chat) => {
+        addChatItemToSidebar(chat, true); // Add to top of the list
+        switchChat(chat.id);
     });
 
     socket.on('chat_deleted', (data) => {
         const itemToDelete = document.querySelector(`li[data-chat-id="${data.chatId}"]`);
-        if (itemToDelete) {
-            itemToDelete.remove();
-        }
+        if (itemToDelete) itemToDelete.remove();
+        
         if (currentChatId === data.chatId) {
             currentChatId = null;
             chatContainer.innerHTML = '';
-            chatTitle.textContent = "Your Personal AI Assistant";
+            chatTitle.textContent = "Select a Chat";
+            // Switch to the first chat in the list if it exists
             const firstChat = chatList.querySelector('li');
-            if(firstChat) {
+            if (firstChat) {
                 switchChat(firstChat.dataset.chatId);
+            } else {
+                // If no chats are left, create a new one
+                socket.emit('new_chat', { userId });
             }
         }
     });
 
+    // --- FIX: Handle title updates from server ---
+    socket.on('chat_title_updated', (data) => {
+        const chatItem = document.querySelector(`li[data-chat-id="${data.chatId}"] a`);
+        if (chatItem) {
+            chatItem.textContent = data.title;
+        }
+        if (data.chatId === currentChatId) {
+            chatTitle.textContent = data.title;
+        }
+    });
+
     socket.on('response', (data) => {
-        // Only process if the response is for the currently active chat
         if (data.chatId !== currentChatId) return;
 
         showTypingIndicator(false);
@@ -189,6 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function addMessage(text, type) {
         const bubble = document.createElement('div');
         bubble.classList.add('message-bubble', `${type}-message`);
+        // Use textContent to prevent HTML injection
         bubble.textContent = text;
         chatContainer.appendChild(bubble);
         scrollToBottom();

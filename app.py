@@ -30,8 +30,12 @@ def load_chat_history(user_id, chat_id):
     filepath = get_chat_filepath(user_id, chat_id)
     if not os.path.exists(filepath):
         return []
-    with open(filepath, 'r') as f:
-        return json.load(f)
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
+
 
 def save_chat_history(user_id, chat_id, history):
     """Saves a chat history to a file."""
@@ -69,12 +73,11 @@ def handle_get_chats(data):
 
     chat_files = [f for f in os.listdir(user_dir) if f.endswith('.json')]
     chats = []
-    for filename in chat_files:
+    for filename in sorted(chat_files, key=lambda f: os.path.getmtime(os.path.join(user_dir, f)), reverse=True):
         chat_id = os.path.splitext(filename)[0]
         history = load_chat_history(user_id, chat_id)
-        # Use the first user message as the title, or a default
         title = next((msg['content'] for msg in history if msg['role'] == 'user'), 'New Chat')
-        chats.append({'id': chat_id, 'title': title})
+        chats.append({'id': chat_id, 'title': title[:50]}) # Truncate title
 
     socketio.emit('chat_list', {'chats': chats}, to=request.sid)
 
@@ -99,7 +102,7 @@ def handle_new_chat(data):
     
     chat_id = str(uuid.uuid4())
     save_chat_history(user_id, chat_id, []) # Create an empty history file
-    socketio.emit('chat_created', {'chatId': chat_id, 'title': 'New Chat'}, to=request.sid)
+    socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
 
 
 @socketio.on('delete_chat')
@@ -133,8 +136,19 @@ def handle_message(data):
         return
 
     history = load_chat_history(user_id, chat_id)
+    
+    # Check if this is the first user message to update the title
+    is_first_message = not any(msg['role'] == 'user' for msg in history)
+
     history.append({'role': 'user', 'content': user_message})
     
+    # --- FIX: Save user message immediately ---
+    save_chat_history(user_id, chat_id, history)
+
+    # --- FIX: Emit title update if it's the first message ---
+    if is_first_message:
+        socketio.emit('chat_title_updated', {'chatId': chat_id, 'title': user_message[:50]}, to=session_id)
+
     try:
         client = ollama.Client(host=OLLAMA_HOST)
         stream = client.chat(
