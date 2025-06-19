@@ -77,4 +77,4 @@ def handle_disconnect():
     print(f"Client disconnected: {session_id}. History cleared.")
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, host="0.0.0.0", debug=True)
