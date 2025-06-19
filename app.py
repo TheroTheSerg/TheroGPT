@@ -34,7 +34,7 @@ def handle_message(data):
 
     # Get Ollama configuration from environment variables or use defaults
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    ollama_model = os.environ.get("OLLAMA_MODEL", "llama2")
+    ollama_model = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 
     try:
         # Initialize the Ollama client
