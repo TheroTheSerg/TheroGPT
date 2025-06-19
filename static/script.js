@@ -31,6 +31,16 @@ document.addEventListener('DOMContentLoaded', () => {
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
+    // --- Function to send a message ---
+    function sendMessage() {
+        const message = messageInput.value.trim();
+        if (message && currentChatId) {
+            socket.emit('message', { userId, chatId: currentChatId, message });
+            appendMessage('user', message);
+            messageInput.value = '';
+        }
+    }
+
     // --- Event Listeners ---
     newChatBtn.addEventListener('click', () => {
         socket.emit('new_chat', { userId });
@@ -38,11 +48,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     messageForm.addEventListener('submit', (e) => {
         e.preventDefault();
-        const message = messageInput.value.trim();
-        if (message && currentChatId) {
-            socket.emit('message', { userId, chatId: currentChatId, message });
-            appendMessage('user', message);
-            messageInput.value = '';
+        sendMessage();
+    });
+
+    messageInput.addEventListener('keydown', (e) => {
+        // Send message on Enter, but allow newlines with Shift+Enter
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
         }
     });
 
@@ -106,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('response', (data) => {
         if (data.chatId !== currentChatId) return;
 
-        let lastMessage = chatContainer.querySelector('.message-bubble[data-role="assistant"]:last-child');
+        let lastMessage = chatContainer.querySelector('.ai-message:last-child');
         if (data.first_chunk || !lastMessage) {
             appendMessage('assistant', data.content);
         } else {
