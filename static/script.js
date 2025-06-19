@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- Initialize Core Variables ---
     const socket = io();
     const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
@@ -8,11 +9,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatList = document.getElementById('chat-list');
     const chatTitle = document.getElementById('chat-title');
 
+    // --- FIXED: Robust User ID Generation ---
+    const generateFallbackUUID = () => {
+        // A simple fallback for creating a unique ID when crypto.randomUUID is not available
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
     let userId = localStorage.getItem('theroGptUserId');
     if (!userId) {
-        userId = self.crypto.randomUUID();
+        if (self.crypto && self.crypto.randomUUID) {
+            userId = self.crypto.randomUUID();
+        } else {
+            userId = generateFallbackUUID();
+        }
         localStorage.setItem('theroGptUserId', userId);
     }
+    // --- End of Fix ---
 
     let currentChatId = null;
     let currentAiBubble = null;
@@ -20,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isTyping = false;
     const TYPING_SPEED = 15;
 
-    // --- Core & Helper Functions ---
+    // --- Helper & DOM Manipulation Functions ---
     const addMessage = (text, type) => {
         const bubble = document.createElement('div');
         bubble.classList.add('message-bubble', `${type}-message`);
@@ -56,8 +71,21 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         type();
     };
+    
+    const switchChat = (chatId) => {
+        if (chatId === currentChatId) return;
+        currentChatId = chatId;
+        chatContainer.innerHTML = '';
+        currentAiBubble = null;
+        showTypingIndicator(false);
+        document.querySelectorAll('#chat-list li').forEach(item => {
+            item.classList.toggle('active', item.dataset.chatId === currentChatId);
+        });
+        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
+        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Loading...";
+        socket.emit('get_history', { userId, chatId });
+    };
 
-    // --- Chat Management ---
     const addChatItemToSidebar = (chat, prepend = false) => {
         const listItem = document.createElement('li');
         listItem.dataset.chatId = chat.id;
@@ -86,20 +114,6 @@ document.addEventListener('DOMContentLoaded', () => {
         chats.forEach(chat => addChatItemToSidebar(chat));
     };
 
-    const switchChat = (chatId) => {
-        if (chatId === currentChatId) return;
-        currentChatId = chatId;
-        chatContainer.innerHTML = '';
-        currentAiBubble = null;
-        showTypingIndicator(false);
-        document.querySelectorAll('#chat-list li').forEach(item => {
-            item.classList.toggle('active', item.dataset.chatId === currentChatId);
-        });
-        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
-        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Loading...";
-        socket.emit('get_history', { userId, chatId });
-    };
-
     // --- Event Listeners ---
     messageForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -118,6 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Socket.IO Handlers ---
     socket.on('connect', () => socket.emit('get_chats', { userId }));
+
     socket.on('chat_list', (data) => {
         renderChatList(data.chats);
         if (data.chats.length > 0 && !currentChatId) {
@@ -126,15 +141,18 @@ document.addEventListener('DOMContentLoaded', () => {
             socket.emit('new_chat', { userId });
         }
     });
+
     socket.on('chat_history', (data) => {
         if (data.chatId !== currentChatId) return;
         chatContainer.innerHTML = '';
         data.history.forEach(msg => addMessage(msg.content, msg.role));
     });
+
     socket.on('chat_created', (chat) => {
         addChatItemToSidebar(chat, true);
         switchChat(chat.id);
     });
+
     socket.on('chat_deleted', (data) => {
         document.querySelector(`li[data-chat-id="${data.chatId}"]`)?.remove();
         if (currentChatId === data.chatId) {
@@ -144,11 +162,13 @@ document.addEventListener('DOMContentLoaded', () => {
             else socket.emit('new_chat', { userId });
         }
     });
+
     socket.on('chat_title_updated', (data) => {
         const chatItem = document.querySelector(`li[data-chat-id="${data.chatId}"] a`);
         if (chatItem) chatItem.textContent = data.title;
         if (data.chatId === currentChatId) chatTitle.textContent = data.title;
     });
+
     socket.on('response', (data) => {
         if (data.chatId !== currentChatId) return;
         showTypingIndicator(false);
@@ -160,6 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
             typeWriter();
         }
     });
+
     socket.on('response_error', (data) => {
         showTypingIndicator(false);
         addMessage(data.error, 'error');
