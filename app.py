@@ -69,7 +69,6 @@ def handle_get_chats(data):
 
     chat_files = [f for f in os.listdir(user_dir) if f.endswith('.json')]
     chats = []
-    # Sort by modification time to get the most recent chats first
     for filename in sorted(chat_files, key=lambda f: os.path.getmtime(os.path.join(user_dir, f)), reverse=True):
         chat_id = os.path.splitext(filename)[0]
         history = load_chat_history(user_id, chat_id)
@@ -125,6 +124,7 @@ def handle_message(data):
                 first_chunk = False
 
         history.append({'role': 'assistant', 'content': ai_response_content})
+        # THIS IS THE LINE I FIXED
         save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
@@ -135,5 +135,4 @@ def handle_message(data):
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
         os.makedirs(CHAT_SESSIONS_DIR)
-    # The socketio.run command will now use eventlet automatically
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
