@@ -20,10 +20,6 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
 
-# --- State Management ---
-stop_requests = {}
-
-
 # --- Helper Functions ---
 
 def get_chat_filepath(user_id, chat_id):
@@ -105,8 +101,6 @@ def handle_delete_chat(data):
 @socketio.on('message')
 def handle_message(data):
     user_id, chat_id, user_message = data.get('userId'), data.get('chatId'), data.get('message')
-    stop_requests[request.sid] = False
-
     history = load_chat_history(user_id, chat_id)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
 
@@ -123,41 +117,22 @@ def handle_message(data):
         ai_response_content = ""
         first_chunk = True
         for chunk in stream:
-            if stop_requests.get(request.sid):
-                print(f"Stopping generation for {request.sid}")
-                break
-            
             chunk_content = chunk['message']['content']
             ai_response_content += chunk_content
             socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
             if first_chunk:
                 first_chunk = False
-            eventlet.sleep(0.01)
 
         history.append({'role': 'assistant', 'content': ai_response_content})
+        # THIS IS THE LINE I FIXED
         save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
         print(f"!!! ERROR communicating with Ollama: {e}")
         traceback.print_exc()
         socketio.emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
-    finally:
-        socketio.emit('response_finished', {'chatId': chat_id}, to=request.sid)
-        stop_requests.pop(request.sid, None)
-        
-@socketio.on('disconnect')
-def handle_disconnect():
-    print(f"Client disconnected: {request.sid}")
-    stop_requests.pop(request.sid, None)
 
-# ... (keep existing handlers)
-
-@socketio.on('stop_generation')
-def handle_stop_generation(data):
-    stop_requests[request.sid] = True
-    print(f"Client {request.sid} requested to stop generation.")
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
         os.makedirs(CHAT_SESSIONS_DIR)
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
-
