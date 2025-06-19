@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import traceback
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
@@ -15,173 +16,151 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
 
-# --- Helper Functions ---
+# --- Helper Functions (with enhanced logging) ---
 
 def get_user_chat_dir(user_id):
-    """Returns the directory for a specific user's chats."""
     return os.path.join(CHAT_SESSIONS_DIR, user_id)
 
 def get_chat_filepath(user_id, chat_id):
-    """Returns the full path to a chat history file."""
     return os.path.join(get_user_chat_dir(user_id), f"{chat_id}.json")
 
 def load_chat_history(user_id, chat_id):
-    """Loads a chat history from a file."""
     filepath = get_chat_filepath(user_id, chat_id)
+    print(f"Attempting to load history from: {filepath}")
     if not os.path.exists(filepath):
+        print("File not found, returning empty history.")
         return []
     try:
-        with open(filepath, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            # Handle empty file case
+            content = f.read()
+            if not content:
+                print("File is empty, returning empty history.")
+                return []
+            print("File found, loading JSON.")
+            return json.loads(content)
+    except Exception as e:
+        print(f"!!! ERROR loading chat history for {chat_id}: {e}")
+        traceback.print_exc()
         return []
 
-
 def save_chat_history(user_id, chat_id, history):
-    """Saves a chat history to a file."""
-    user_dir = get_user_chat_dir(user_id)
-    os.makedirs(user_dir, exist_ok=True)
     filepath = get_chat_filepath(user_id, chat_id)
-    with open(filepath, 'w') as f:
-        json.dump(history, f, indent=4)
+    print(f"Attempting to save history to: {filepath}")
+    try:
+        os.makedirs(get_user_chat_dir(user_id), exist_ok=True)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=4, ensure_ascii=False)
+        print(f"Successfully saved history for chat {chat_id}.")
+    except Exception as e:
+        print(f"!!! ERROR saving chat history for {chat_id}: {e}")
+        traceback.print_exc()
 
-# --- Flask Routes ---
+# --- Flask & Socket.IO (with enhanced logging) ---
 
 @app.route('/')
 def index():
-    """Serves the main HTML page."""
     return render_template('index.html')
-
-# --- Socket.IO Event Handlers ---
 
 @socketio.on('connect')
 def handle_connect():
-    """A new user has connected."""
-    print(f"Client connected: {request.sid}")
+    print(f"--- Client connected: {request.sid} ---")
 
 @socketio.on('get_chats')
 def handle_get_chats(data):
-    """Returns the list of existing chats for a user."""
     user_id = data.get('userId')
+    print(f"--> Received 'get_chats' for userId: {user_id}")
     if not user_id:
         return
 
     user_dir = get_user_chat_dir(user_id)
     if not os.path.exists(user_dir):
+        print(f"<-- Emitting 'chat_list' with no chats for userId: {user_id}")
         socketio.emit('chat_list', {'chats': []}, to=request.sid)
         return
 
     chat_files = [f for f in os.listdir(user_dir) if f.endswith('.json')]
     chats = []
+    # Sort by modification time to get the most recent chats first
     for filename in sorted(chat_files, key=lambda f: os.path.getmtime(os.path.join(user_dir, f)), reverse=True):
         chat_id = os.path.splitext(filename)[0]
         history = load_chat_history(user_id, chat_id)
         title = next((msg['content'] for msg in history if msg['role'] == 'user'), 'New Chat')
-        chats.append({'id': chat_id, 'title': title[:50]}) # Truncate title
+        chats.append({'id': chat_id, 'title': title[:50]})
 
+    print(f"<-- Emitting 'chat_list' with {len(chats)} chats for userId: {user_id}")
     socketio.emit('chat_list', {'chats': chats}, to=request.sid)
 
 @socketio.on('get_history')
 def handle_get_history(data):
-    """Returns the history for a specific chat."""
     user_id = data.get('userId')
     chat_id = data.get('chatId')
-    if not user_id or not chat_id:
-        return
-
+    print(f"--> Received 'get_history' for chatId: {chat_id}")
     history = load_chat_history(user_id, chat_id)
+    print(f"<-- Emitting 'chat_history' for chatId: {chat_id} with {len(history)} messages.")
     socketio.emit('chat_history', {'chatId': chat_id, 'history': history}, to=request.sid)
-
 
 @socketio.on('new_chat')
 def handle_new_chat(data):
-    """Creates a new chat session for the user."""
     user_id = data.get('userId')
-    if not user_id:
-        return
-    
+    print(f"--> Received 'new_chat' for userId: {user_id}")
     chat_id = str(uuid.uuid4())
-    save_chat_history(user_id, chat_id, []) # Create an empty history file
+    save_chat_history(user_id, chat_id, [])
+    print(f"<-- Emitting 'chat_created' for new chatId: {chat_id}")
     socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
-
 
 @socketio.on('delete_chat')
 def handle_delete_chat(data):
-    """Deletes a chat session."""
     user_id = data.get('userId')
     chat_id = data.get('chatId')
-    if not user_id or not chat_id:
-        return
-
+    print(f"--> Received 'delete_chat' for chatId: {chat_id}")
     filepath = get_chat_filepath(user_id, chat_id)
     if os.path.exists(filepath):
         os.remove(filepath)
-        print(f"Deleted chat {chat_id} for user {user_id}")
+        print(f"Deleted chat file: {filepath}")
         socketio.emit('chat_deleted', {'chatId': chat_id}, to=request.sid)
-
 
 @socketio.on('message')
 def handle_message(data):
-    """
-    Handles a new message from a client, sends it to Ollama,
-    and streams the response back.
-    """
-    session_id = request.sid
-    user_id = data.get('userId')
-    chat_id = data.get('chatId')
-    user_message = data['message']
-
-    if not user_id or not chat_id:
-        print("Error: userId or chatId not provided.")
-        return
-
+    user_id, chat_id, user_message = data.get('userId'), data.get('chatId'), data.get('message')
+    print(f"--> Received 'message' for chatId: {chat_id}. Message: '{user_message}'")
+    
     history = load_chat_history(user_id, chat_id)
+    is_first_user_message = not any(msg['role'] == 'user' for msg in history)
     
-    # Check if this is the first user message to update the title
-    is_first_message = not any(msg['role'] == 'user' for msg in history)
-
     history.append({'role': 'user', 'content': user_message})
-    
-    # --- FIX: Save user message immediately ---
     save_chat_history(user_id, chat_id, history)
 
-    # --- FIX: Emit title update if it's the first message ---
-    if is_first_message:
-        socketio.emit('chat_title_updated', {'chatId': chat_id, 'title': user_message[:50]}, to=session_id)
+    if is_first_user_message:
+        new_title = user_message[:50]
+        print(f"<-- Emitting 'chat_title_updated' for chatId {chat_id}. New title: '{new_title}'")
+        socketio.emit('chat_title_updated', {'chatId': chat_id, 'title': new_title})
 
     try:
+        print("Streaming response from Ollama...")
         client = ollama.Client(host=OLLAMA_HOST)
-        stream = client.chat(
-            model=OLLAMA_MODEL,
-            messages=history,
-            stream=True
-        )
+        stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
 
         ai_response_content = ""
-        first_chunk = True
-        
         for chunk in stream:
-            chunk_content = chunk['message']['content']
-            ai_response_content += chunk_content
-            socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=session_id)
-            if first_chunk:
-                first_chunk = False
+            ai_response_content += chunk['message']['content']
+            socketio.emit('response', {'content': chunk['message']['content'], 'chatId': chat_id}, to=request.sid)
 
+        print("Ollama stream finished.")
         history.append({'role': 'assistant', 'content': ai_response_content})
         save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
-        print(f"Error communicating with Ollama: {e}")
-        error_message = "Sorry, I'm having trouble connecting to the AI model. Please check if Ollama is running."
-        socketio.emit('response_error', {'error': error_message, 'chatId': chat_id}, to=session_id)
-
+        print(f"!!! ERROR communicating with Ollama: {e}")
+        traceback.print_exc()
+        socketio.emit('response_error', {'error': "Error connecting to the AI model."}, to=request.sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """A client has disconnected."""
-    print(f"Client disconnected: {request.sid}")
+    print(f"--- Client disconnected: {request.sid} ---")
 
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
         os.makedirs(CHAT_SESSIONS_DIR)
-    socketio.run(app, host="0.0.0.0", debug=True)
+    print("Starting Flask-SocketIO server...")
+    socketio.run(app, host="0.0.0.0", debug=True, allow_unsafe_werkzeug=True)
