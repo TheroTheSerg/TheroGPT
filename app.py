@@ -1,76 +1,80 @@
-import requests
-import json
+import os
+import ollama
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
+from flask_cors import CORS
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "super-secret-key"
-socketio = SocketIO(app, cors_allowed_origins="*")
+CORS(app)
+socketio = SocketIO(app)
 
-# Memory: store chat history per session (not persistent, but easily made so)
+# In-memory store for chat histories, mapping session IDs to message lists
 chat_histories = {}
-MAX_HISTORY = 10
 
-SYSTEM_PROMPT = "You are a helpful assistant."
-
-def build_prompt(history):
-    # Format history for Dolphin-mistral (OpenChat/ChatML)
-    prompt = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
-    for m in history:
-        if m["role"] == "user":
-            prompt += f"<|im_start|>user\n{m['content']}<|im_end|>\n"
-        else:
-            prompt += f"<|im_start|>assistant\n{m['content']}<|im_end|>\n"
-    prompt += "<|im_start|>assistant\n"  # Start of next assistant reply
-    return prompt
-
-@app.route("/")
+@app.route('/')
 def index():
-    return render_template("index.html")
+    """Serves the main HTML page."""
+    return render_template('index.html')
 
-def ollama_stream(user_input, session_id):
-    # Fetch and update history
-    history = chat_histories.get(session_id, [])
-    history.append({"role": "user", "content": user_input})
-    history = history[-MAX_HISTORY:]
-    formatted_prompt = build_prompt(history)
-    payload = {
-        "model": "dolphin-mistral",
-        "prompt": formatted_prompt,
-        "stream": True
-    }
-    url = "http://localhost:11434/api/generate"
-    with requests.post(url, json=payload, stream=True) as resp:
-        assistant_reply = ""
-        for line in resp.iter_lines():
-            if line:
-                try:
-                    data = json.loads(line.decode("utf-8"))
-                    if "response" in data:
-                        token = data["response"]
-                        assistant_reply += token
-                        yield token
-                except Exception:
-                    continue
-        # Save full assistant reply to history
-        history.append({"role": "assistant", "content": assistant_reply})
-        chat_histories[session_id] = history[-MAX_HISTORY:]
+@socketio.on('message')
+def handle_message(data):
+    """
+    Handles a new message from a client, sends it to Ollama,
+    and streams the response back.
+    """
+    session_id = request.sid
+    user_message = data['message']
 
-@socketio.on("user_message")
-def handle_user_message(data):
-    user_msg = data.get("message")
-    session_id = data.get("session_id", "default")
-    if not user_msg:
-        return
-    for chunk in ollama_stream(user_msg, session_id):
-        emit("bot_message", {"message": chunk})
+    # Retrieve or create the chat history for the session
+    if session_id not in chat_histories:
+        chat_histories[session_id] = []
+    
+    # Add the new user message to the history
+    chat_histories[session_id].append({'role': 'user', 'content': user_message})
 
-# Optional: reset chat memory endpoint
-@app.route("/reset_memory", methods=["POST"])
-def reset_memory():
-    session_id = request.json.get("session_id", "default")
-    chat_histories.pop(session_id, None)
-    return {"status": "ok"}
+    # Get Ollama configuration from environment variables or use defaults
+    ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    ollama_model = os.environ.get("OLLAMA_MODEL", "llama2")
 
-if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    try:
+        # Initialize the Ollama client
+        client = ollama.Client(host=ollama_host)
+        
+        # Stream the response from Ollama
+        stream = client.chat(
+            model=ollama_model,
+            messages=chat_histories[session_id],
+            stream=True
+        )
+
+        # Create a placeholder for the full AI response
+        ai_response_content = ""
+        first_chunk = True
+        
+        for chunk in stream:
+            chunk_content = chunk['message']['content']
+            ai_response_content += chunk_content
+            
+            # Emit the chunk to the client
+            socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk}, to=session_id)
+            if first_chunk:
+                first_chunk = False
+
+        # Add the full AI response to the history
+        chat_histories[session_id].append({'role': 'assistant', 'content': ai_response_content})
+
+    except Exception as e:
+        print(f"Error communicating with Ollama: {e}")
+        error_message = "Sorry, I'm having trouble connecting to the AI model. Please check if Ollama is running."
+        socketio.emit('response_error', {'error': error_message}, to=session_id)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Clears the chat history for a disconnected user."""
+    session_id = request.sid
+    if session_id in chat_histories:
+        del chat_histories[session_id]
+    print(f"Client disconnected: {session_id}. History cleared.")
+
+if __name__ == '__main__':
+    socketio.run(app, debug=True)
