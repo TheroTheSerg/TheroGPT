@@ -63,6 +63,8 @@ body, html {
     background-color: #454545;
 }
 
+/* --- Find and replace this whole block in static/style.css --- */
+
 #chat-list-nav {
     flex-grow: 1;
     overflow-y: auto;
@@ -74,11 +76,16 @@ body, html {
 
 .chat-list-item {
     position: relative;
-    padding: 12px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background-color 0.2s;
     margin-bottom: 5px;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+}
+
+.chat-list-item a {
+    display: block;
+    padding: 12px 10px;
+    color: var(--text-secondary); /* Default color for chat links */
+    text-decoration: none; /* Removes the underline */
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -89,8 +96,11 @@ body, html {
 }
 
 .chat-list-item.active {
-    background-color: var(--accent-color);
-    color: white;
+    background-color: var(--accent-color); /* Blue background for active chat */
+}
+
+.chat-list-item.active a {
+    color: white; /* White text for active chat */
 }
 
 .delete-chat-button {
@@ -104,6 +114,7 @@ body, html {
     font-size: 1.2rem;
     cursor: pointer;
     display: none; /* Hide by default */
+    padding: 2px 5px;
 }
 
 .chat-list-item:hover .delete-chat-button {
