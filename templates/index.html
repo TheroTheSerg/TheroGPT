@@ -7,25 +7,32 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div class="container">
+    <div id="app-container">
         <div class="sidebar">
-            <button id="new-chat-btn">New Chat</button>
-            <ul id="chat-list">
-                </ul>
+            <div class="sidebar-header">
+                <h2>Chats</h2>
+            </div>
+            <button class="sidebar-button" id="new-chat-btn">New Chat</button>
+            <nav id="chat-list-nav">
+                <ul id="chat-list">
+                    </ul>
+            </nav>
         </div>
         <div class="chat-area">
-            <div id="chat-history">
-                <div class="welcome-message">
-                    <h1>TheroGPT</h1>
-                    <p>Your personal AI assistant.</p>
+            <header class="app-header">
+                <h3>TheroGPT</h3>
+            </header>
+            <div id="chat-container">
                 </div>
+            <div id="form-container">
+                <form id="message-form">
+                    <textarea id="message-input" placeholder="Message TheroGPT..." required></textarea>
+                    <button type="submit" id="send-button">Send</button>
+                </form>
             </div>
-            <form id="message-form">
-                <textarea id="message-input" placeholder="Message TheroGPT..." required></textarea>
-                <button type="submit">Send</button>
-            </form>
         </div>
     </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

@@ -3,9 +3,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const chatList = document.getElementById('chat-list');
     const newChatBtn = document.getElementById('new-chat-btn');
-    const chatHistory = document.getElementById('chat-history');
+    const chatContainer = document.getElementById('chat-container');
     const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
+    const sendButton = document.getElementById('send-button');
 
     let currentChatId = null;
     let userId = localStorage.getItem('userId');
@@ -13,7 +14,24 @@ document.addEventListener('DOMContentLoaded', () => {
         userId = `user_${Math.random().toString(36).substr(2, 9)}`;
         localStorage.setItem('userId', userId);
     }
+    
+    // --- Helper Function to create message bubbles ---
+    function appendMessage(role, content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message-bubble');
+        if (role === 'user') {
+            messageDiv.classList.add('user-message');
+        } else if (role === 'assistant') {
+            messageDiv.classList.add('ai-message');
+        } else {
+            messageDiv.classList.add('error-message');
+        }
+        messageDiv.textContent = content;
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
 
+    // --- Event Listeners ---
     newChatBtn.addEventListener('click', () => {
         socket.emit('new_chat', { userId });
     });
@@ -28,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // --- Socket.IO Handlers ---
     socket.on('connect', () => {
         console.log('Connected to server');
         socket.emit('get_chats', { userId });
@@ -37,14 +56,34 @@ document.addEventListener('DOMContentLoaded', () => {
         chatList.innerHTML = '';
         data.chats.forEach(chat => {
             const li = document.createElement('li');
-            li.textContent = chat.title;
+            li.className = 'chat-list-item';
             li.dataset.chatId = chat.id;
-            li.addEventListener('click', () => {
+
+            const a = document.createElement('a');
+            a.href = '#';
+            a.textContent = chat.title;
+            li.appendChild(a);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-chat-button';
+            deleteBtn.innerHTML = '&times;';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (confirm('Are you sure you want to delete this chat?')) {
+                    socket.emit('delete_chat', { userId, chatId: chat.id });
+                }
+            });
+            li.appendChild(deleteBtn);
+            
+            li.addEventListener('click', (e) => {
+                e.preventDefault();
                 currentChatId = chat.id;
                 socket.emit('get_history', { userId, chatId: currentChatId });
-                document.querySelectorAll('#chat-list li').forEach(item => item.classList.remove('active'));
-                li.classList.add('active');
             });
+
+            if (chat.id === currentChatId) {
+                li.classList.add('active');
+            }
             chatList.appendChild(li);
         });
     });
@@ -56,50 +95,45 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     socket.on('chat_history', (data) => {
-        chatHistory.innerHTML = '';
+        chatContainer.innerHTML = '';
         currentChatId = data.chatId;
-        data.history.forEach(msg => appendMessage(msg.role, msg.content));
         document.querySelectorAll('#chat-list li').forEach(item => {
             item.classList.toggle('active', item.dataset.chatId === currentChatId);
         });
+        data.history.forEach(msg => appendMessage(msg.role, msg.content));
     });
 
     socket.on('response', (data) => {
         if (data.chatId !== currentChatId) return;
 
-        let lastMessage = chatHistory.querySelector('.message:last-child');
-        if (data.first_chunk || !lastMessage || lastMessage.dataset.role !== 'assistant') {
+        let lastMessage = chatContainer.querySelector('.message-bubble[data-role="assistant"]:last-child');
+        if (data.first_chunk || !lastMessage) {
             appendMessage('assistant', data.content);
         } else {
-            lastMessage.querySelector('.content').innerHTML += data.content;
+            lastMessage.textContent += data.content;
         }
-        chatHistory.scrollTop = chatHistory.scrollHeight;
+        chatContainer.scrollTop = chatContainer.scrollHeight;
     });
 
     socket.on('response_error', (data) => {
-        appendMessage('assistant error', data.error);
+        appendMessage('error', data.error);
     });
     
     socket.on('chat_title_updated', (data) => {
-        if (data.chatId === currentChatId) {
-             const chatListItem = chatList.querySelector(`[data-chat-id="${data.chatId}"]`);
-             if (chatListItem) {
-                 chatListItem.textContent = data.title;
-             }
+        const chatListItem = chatList.querySelector(`[data-chat-id="${data.chatId}"] a`);
+        if (chatListItem) {
+            chatListItem.textContent = data.title;
         }
     });
 
-    function appendMessage(role, content) {
-        const messageDiv = document.createElement('div');
-        messageDiv.classList.add('message', `${role}-message`);
-        messageDiv.dataset.role = role;
-        
-        const contentDiv = document.createElement('div');
-        contentDiv.classList.add('content');
-        contentDiv.textContent = content;
-        
-        messageDiv.appendChild(contentDiv);
-        chatHistory.appendChild(messageDiv);
-        chatHistory.scrollTop = chatHistory.scrollHeight;
-    }
+    socket.on('chat_deleted', (data) => {
+        const itemToRemove = chatList.querySelector(`[data-chat-id="${data.chatId}"]`);
+        if (itemToRemove) {
+            itemToRemove.remove();
+        }
+        if (currentChatId === data.chatId) {
+            chatContainer.innerHTML = '';
+            currentChatId = null;
+        }
+    });
 });
