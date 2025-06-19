@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageInput = document.getElementById('message-input');
     const chatContainer = document.getElementById('chat-container');
     const typingIndicator = document.getElementById('typing-indicator');
+    const clearButton = document.getElementById('clear-button');
 
     let currentAiBubble = null;
 
@@ -21,6 +22,11 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAiBubble = null; // Reset for the new response
         }
     });
+    
+    // Handle clear chat button click
+    clearButton.addEventListener('click', () => {
+        socket.emit('clear_history');
+    });
 
     // Handle incoming response chunks from the server
     socket.on('response', (data) => {
@@ -29,6 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAiBubble = addMessage('', 'ai');
         }
         if (currentAiBubble) {
+            // Append content and scroll smoothly
             currentAiBubble.textContent += data.content;
             scrollToBottom();
         }
@@ -38,6 +45,12 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('response_error', (data) => {
         showTypingIndicator(false);
         addMessage(data.error, 'error');
+    });
+    
+    // Handle history cleared confirmation
+    socket.on('history_cleared', (data) => {
+        chatContainer.innerHTML = ''; // Clear the chat display
+        console.log(data.message);
     });
 
     // --- Helper Functions ---

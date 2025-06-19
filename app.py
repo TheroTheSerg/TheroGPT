@@ -68,6 +68,16 @@ def handle_message(data):
         error_message = "Sorry, I'm having trouble connecting to the AI model. Please check if Ollama is running."
         socketio.emit('response_error', {'error': error_message}, to=session_id)
 
+@socketio.on('clear_history')
+def handle_clear_history():
+    """Clears the chat history for the current session."""
+    session_id = request.sid
+    if session_id in chat_histories:
+        del chat_histories[session_id]
+        print(f"Chat history cleared for session: {session_id}")
+        # Optionally, send a confirmation to the client
+        socketio.emit('history_cleared', {'message': 'Chat history has been cleared.'}, to=session_id)
+
 @socketio.on('disconnect')
 def handle_disconnect():
     """Clears the chat history for a disconnected user."""
