@@ -1,6 +1,4 @@
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOM fully loaded. Initializing script.");
-
     const socket = io();
     const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
@@ -14,72 +12,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!userId) {
         userId = self.crypto.randomUUID();
         localStorage.setItem('theroGptUserId', userId);
-        console.log("No userId found. Generated new one:", userId);
-    } else {
-        console.log("Found existing userId:", userId);
     }
 
     let currentChatId = null;
     let currentAiBubble = null;
+    const chunkQueue = [];
+    let isTyping = false;
+    const TYPING_SPEED = 15;
 
-    // --- Chat Management Functions ---
-    const addChatItemToSidebar = (chat, prepend = false) => {
-        console.log("Adding chat to sidebar:", chat);
-        const listItem = document.createElement('li');
-        listItem.dataset.chatId = chat.id;
-        listItem.classList.add('chat-list-item');
-
-        const chatLink = document.createElement('a');
-        chatLink.href = '#';
-        chatLink.textContent = chat.title;
-        listItem.appendChild(chatLink);
-
-        const deleteButton = document.createElement('button');
-        deleteButton.textContent = '×';
-        deleteButton.classList.add('delete-chat-button');
-        deleteButton.onclick = (e) => {
-            e.stopPropagation();
-            if (confirm(`Delete chat "${chat.title}"?`)) {
-                socket.emit('delete_chat', { userId, chatId: chat.id });
-            }
-        };
-        listItem.appendChild(deleteButton);
-        
-        listItem.addEventListener('click', () => switchChat(chat.id));
-
-        if (prepend) chatList.prepend(listItem);
-        else chatList.appendChild(listItem);
-    };
-
-    const renderChatList = (chats) => {
-        console.log("Rendering chat list with", chats.length, "chats.");
-        chatList.innerHTML = '';
-        chats.forEach(chat => addChatItemToSidebar(chat));
-    };
-
-    const switchChat = (chatId) => {
-        console.log(`Switching to chat: ${chatId}. Current chat is: ${currentChatId}`);
-        if (chatId === currentChatId) {
-            console.log("Already on this chat. Aborting switch.");
-            return;
-        }
-        
-        currentChatId = chatId;
-        chatContainer.innerHTML = '';
-        currentAiBubble = null;
-        showTypingIndicator(false);
-        
-        document.querySelectorAll('#chat-list li').forEach(item => {
-            item.classList.toggle('active', item.dataset.chatId === currentChatId);
-        });
-        
-        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
-        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Loading Chat...";
-        
-        console.log(`Emitting 'get_history' for chat: ${chatId}`);
-        socket.emit('get_history', { userId, chatId });
-    };
-
+    // --- Core & Helper Functions ---
     const addMessage = (text, type) => {
         const bubble = document.createElement('div');
         bubble.classList.add('message-bubble', `${type}-message`);
@@ -89,24 +30,81 @@ document.addEventListener('DOMContentLoaded', () => {
         return bubble;
     };
 
+    const scrollToBottom = () => {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    };
+
     const showTypingIndicator = (show) => {
         typingIndicator.style.display = show ? 'flex' : 'none';
     };
 
-    const scrollToBottom = () => {
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+    const typeWriter = () => {
+        if (isTyping || chunkQueue.length === 0) return;
+        isTyping = true;
+        const chunk = chunkQueue.shift();
+        let i = 0;
+        const type = () => {
+            if (i < chunk.length) {
+                currentAiBubble.textContent += chunk.charAt(i);
+                i++;
+                scrollToBottom();
+                setTimeout(type, TYPING_SPEED);
+            } else {
+                isTyping = false;
+                typeWriter();
+            }
+        };
+        type();
+    };
+
+    // --- Chat Management ---
+    const addChatItemToSidebar = (chat, prepend = false) => {
+        const listItem = document.createElement('li');
+        listItem.dataset.chatId = chat.id;
+        listItem.classList.add('chat-list-item');
+        const chatLink = document.createElement('a');
+        chatLink.href = '#';
+        chatLink.textContent = chat.title;
+        listItem.appendChild(chatLink);
+        const deleteButton = document.createElement('button');
+        deleteButton.innerHTML = '&times;';
+        deleteButton.classList.add('delete-chat-button');
+        deleteButton.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm(`Are you sure you want to delete "${chat.title}"?`)) {
+                socket.emit('delete_chat', { userId, chatId: chat.id });
+            }
+        };
+        listItem.appendChild(deleteButton);
+        listItem.addEventListener('click', () => switchChat(chat.id));
+        if (prepend) chatList.prepend(listItem);
+        else chatList.appendChild(listItem);
+    };
+
+    const renderChatList = (chats) => {
+        chatList.innerHTML = '';
+        chats.forEach(chat => addChatItemToSidebar(chat));
+    };
+
+    const switchChat = (chatId) => {
+        if (chatId === currentChatId) return;
+        currentChatId = chatId;
+        chatContainer.innerHTML = '';
+        currentAiBubble = null;
+        showTypingIndicator(false);
+        document.querySelectorAll('#chat-list li').forEach(item => {
+            item.classList.toggle('active', item.dataset.chatId === currentChatId);
+        });
+        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
+        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Loading...";
+        socket.emit('get_history', { userId, chatId });
     };
 
     // --- Event Listeners ---
     messageForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const message = messageInput.value.trim();
-        console.log("Form submitted. Message:", message, "Chat ID:", currentChatId);
-
-        if (!currentChatId) {
-            alert("Please select a chat first.");
-            return;
-        }
+        if (!currentChatId) return alert("Please select a chat first.");
         if (message) {
             addMessage(message, 'user');
             socket.emit('message', { userId, chatId: currentChatId, message });
@@ -116,49 +114,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    newChatButton.addEventListener('click', () => {
-        console.log("New chat button clicked.");
-        socket.emit('new_chat', { userId });
-    });
+    newChatButton.addEventListener('click', () => socket.emit('new_chat', { userId }));
 
-    // --- Socket.IO Event Handlers ---
-    socket.on('connect', () => {
-        console.log("--- Socket connected! Emitting 'get_chats'. ---");
-        socket.emit('get_chats', { userId });
-    });
-
+    // --- Socket.IO Handlers ---
+    socket.on('connect', () => socket.emit('get_chats', { userId }));
     socket.on('chat_list', (data) => {
-        console.log("<-- Received 'chat_list':", data.chats);
         renderChatList(data.chats);
-        if (data.chats.length > 0) {
-            if (!currentChatId) {
-                switchChat(data.chats[0].id);
-            }
-        } else {
-            console.log("Chat list is empty. Requesting a new chat.");
+        if (data.chats.length > 0 && !currentChatId) {
+            switchChat(data.chats[0].id);
+        } else if (data.chats.length === 0) {
             socket.emit('new_chat', { userId });
         }
     });
-    
     socket.on('chat_history', (data) => {
-        console.log("<-- Received 'chat_history' for chat:", data.chatId);
         if (data.chatId !== currentChatId) return;
         chatContainer.innerHTML = '';
         data.history.forEach(msg => addMessage(msg.content, msg.role));
-        scrollToBottom();
     });
-    
     socket.on('chat_created', (chat) => {
-        console.log("<-- Received 'chat_created':", chat);
         addChatItemToSidebar(chat, true);
         switchChat(chat.id);
     });
-
     socket.on('chat_deleted', (data) => {
-        console.log("<-- Received 'chat_deleted':", data.chatId);
-        const itemToDelete = document.querySelector(`li[data-chat-id="${data.chatId}"]`);
-        if (itemToDelete) itemToDelete.remove();
-        
+        document.querySelector(`li[data-chat-id="${data.chatId}"]`)?.remove();
         if (currentChatId === data.chatId) {
             currentChatId = null;
             const firstChat = chatList.querySelector('li');
@@ -166,28 +144,23 @@ document.addEventListener('DOMContentLoaded', () => {
             else socket.emit('new_chat', { userId });
         }
     });
-
     socket.on('chat_title_updated', (data) => {
-        console.log("<-- Received 'chat_title_updated':", data);
         const chatItem = document.querySelector(`li[data-chat-id="${data.chatId}"] a`);
         if (chatItem) chatItem.textContent = data.title;
         if (data.chatId === currentChatId) chatTitle.textContent = data.title;
     });
-
     socket.on('response', (data) => {
         if (data.chatId !== currentChatId) return;
         showTypingIndicator(false);
-
-        if (!currentAiBubble) {
+        if (data.first_chunk) {
             currentAiBubble = addMessage('', 'ai');
         }
-        currentAiBubble.textContent += data.content;
-        scrollToBottom();
+        if (currentAiBubble) {
+            chunkQueue.push(data.content);
+            typeWriter();
+        }
     });
-
     socket.on('response_error', (data) => {
-        console.error("<-- Received 'response_error':", data);
-        if (data.chatId !== currentChatId) return;
         showTypingIndicator(false);
         addMessage(data.error, 'error');
     });
