@@ -52,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     messageInput.addEventListener('keydown', (e) => {
-        // Send message on Enter, but allow newlines with Shift+Enter
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
@@ -94,17 +93,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 socket.emit('get_history', { userId, chatId: currentChatId });
             });
 
-            if (chat.id === currentChatId) {
-                li.classList.add('active');
-            }
             chatList.appendChild(li);
+        });
+
+        // If no chats exist, create one. Otherwise, if no chat is selected, select the first one.
+        if (data.chats.length === 0) {
+            socket.emit('new_chat', { userId });
+        } else if (!currentChatId) {
+            currentChatId = data.chats[0].id;
+            socket.emit('get_history', { userId, chatId: currentChatId });
+        }
+        
+        // Update the active class on the chat list
+        document.querySelectorAll('#chat-list li').forEach(item => {
+            item.classList.toggle('active', item.dataset.chatId === currentChatId);
         });
     });
 
     socket.on('chat_created', (chat) => {
-        socket.emit('get_chats', { userId });
+        socket.emit('get_chats', { userId }); // Refresh the list
         currentChatId = chat.id;
-        socket.emit('get_history', { userId, chatId: currentChatId });
+        socket.emit('get_history', { userId, chatId: currentChatId }); // Load the new empty chat
     });
     
     socket.on('chat_history', (data) => {
@@ -147,6 +156,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentChatId === data.chatId) {
             chatContainer.innerHTML = '';
             currentChatId = null;
+            // After deleting, check if there are other chats and select the first one
+            socket.emit('get_chats', { userId });
         }
     });
 });
