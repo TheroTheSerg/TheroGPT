@@ -7,6 +7,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearButton = document.getElementById('clear-button');
 
     let currentAiBubble = null;
+    const chunkQueue = [];
+    let isTyping = false;
+    const TYPING_SPEED = 15; // Milliseconds between characters
+
+    // --- Core Functions ---
+
+    /**
+     * Takes text chunks from the queue and "types" them out character by character.
+     */
+    function typeWriter() {
+        if (isTyping || chunkQueue.length === 0) {
+            return;
+        }
+        isTyping = true;
+        const chunk = chunkQueue.shift();
+        let i = 0;
+
+        function type() {
+            if (i < chunk.length) {
+                currentAiBubble.textContent += chunk.charAt(i);
+                i++;
+                scrollToBottom();
+                setTimeout(type, TYPING_SPEED);
+            } else {
+                isTyping = false;
+                // Immediately check for and start typing the next chunk
+                typeWriter(); 
+            }
+        }
+        type();
+    }
 
     // --- Event Listeners ---
 
@@ -22,22 +53,26 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAiBubble = null; // Reset for the new response
         }
     });
-    
+
     // Handle clear chat button click
     clearButton.addEventListener('click', () => {
         socket.emit('clear_history');
     });
 
+    // --- Socket.IO Event Handlers ---
+
     // Handle incoming response chunks from the server
     socket.on('response', (data) => {
         showTypingIndicator(false);
+
         if (data.first_chunk) {
             currentAiBubble = addMessage('', 'ai');
         }
+        
         if (currentAiBubble) {
-            // Append content and scroll smoothly
-            currentAiBubble.textContent += data.content;
-            scrollToBottom();
+            // Add the received chunk to the queue and start the typewriter
+            chunkQueue.push(data.content);
+            typeWriter();
         }
     });
 
@@ -46,7 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showTypingIndicator(false);
         addMessage(data.error, 'error');
     });
-    
+
     // Handle history cleared confirmation
     socket.on('history_cleared', (data) => {
         chatContainer.innerHTML = ''; // Clear the chat display
