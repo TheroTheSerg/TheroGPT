@@ -1,188 +1,140 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Initialize Core Variables ---
     const socket = io();
+
+    const chatList = document.getElementById('chat-list');
+    const newChatBtn = document.getElementById('new-chat-btn');
+    const chatHistory = document.getElementById('chat-history');
     const messageForm = document.getElementById('message-form');
     const messageInput = document.getElementById('message-input');
-    const chatContainer = document.getElementById('chat-container');
-    const typingIndicator = document.getElementById('typing-indicator');
-    const newChatButton = document.getElementById('new-chat-button');
-    const chatList = document.getElementById('chat-list');
-    const chatTitle = document.getElementById('chat-title');
-
-    // --- FIXED: Robust User ID Generation ---
-    const generateFallbackUUID = () => {
-        // A simple fallback for creating a unique ID when crypto.randomUUID is not available
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
-    }
-
-    let userId = localStorage.getItem('theroGptUserId');
-    if (!userId) {
-        if (self.crypto && self.crypto.randomUUID) {
-            userId = self.crypto.randomUUID();
-        } else {
-            userId = generateFallbackUUID();
-        }
-        localStorage.setItem('theroGptUserId', userId);
-    }
-    // --- End of Fix ---
+    const sendButton = document.getElementById('send-button');
+    const stopButton = document.getElementById('stop-button');
 
     let currentChatId = null;
-    let currentAiBubble = null;
-    const chunkQueue = [];
-    let isTyping = false;
-    const TYPING_SPEED = 15;
+    let userId = localStorage.getItem('userId');
+    if (!userId) {
+        userId = `user_${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('userId', userId);
+    }
 
-    // --- Helper & DOM Manipulation Functions ---
-    const addMessage = (text, type) => {
-        const bubble = document.createElement('div');
-        bubble.classList.add('message-bubble', `${type}-message`);
-        bubble.textContent = text;
-        chatContainer.appendChild(bubble);
-        scrollToBottom();
-        return bubble;
-    };
+    // --- Helper Functions ---
+    function enableMessageForm() {
+        messageInput.disabled = false;
+        sendButton.style.display = 'inline-block';
+        stopButton.style.display = 'none';
+        messageInput.focus();
+    }
 
-    const scrollToBottom = () => {
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-    };
+    function disableMessageForm() {
+        messageInput.disabled = true;
+        sendButton.style.display = 'none';
+        stopButton.style.display = 'inline-block';
+    }
 
-    const showTypingIndicator = (show) => {
-        typingIndicator.style.display = show ? 'flex' : 'none';
-    };
-
-    const typeWriter = () => {
-        if (isTyping || chunkQueue.length === 0) return;
-        isTyping = true;
-        const chunk = chunkQueue.shift();
-        let i = 0;
-        const type = () => {
-            if (i < chunk.length) {
-                currentAiBubble.textContent += chunk.charAt(i);
-                i++;
-                scrollToBottom();
-                setTimeout(type, TYPING_SPEED);
-            } else {
-                isTyping = false;
-                typeWriter();
-            }
-        };
-        type();
-    };
-    
-    const switchChat = (chatId) => {
-        if (chatId === currentChatId) return;
-        currentChatId = chatId;
-        chatContainer.innerHTML = '';
-        currentAiBubble = null;
-        showTypingIndicator(false);
-        document.querySelectorAll('#chat-list li').forEach(item => {
-            item.classList.toggle('active', item.dataset.chatId === currentChatId);
-        });
-        const activeChatEl = document.querySelector(`#chat-list li[data-chat-id="${chatId}"] a`);
-        chatTitle.textContent = activeChatEl ? activeChatEl.textContent : "Loading...";
-        socket.emit('get_history', { userId, chatId });
-    };
-
-    const addChatItemToSidebar = (chat, prepend = false) => {
-        const listItem = document.createElement('li');
-        listItem.dataset.chatId = chat.id;
-        listItem.classList.add('chat-list-item');
-        const chatLink = document.createElement('a');
-        chatLink.href = '#';
-        chatLink.textContent = chat.title;
-        listItem.appendChild(chatLink);
-        const deleteButton = document.createElement('button');
-        deleteButton.innerHTML = '&times;';
-        deleteButton.classList.add('delete-chat-button');
-        deleteButton.onclick = (e) => {
-            e.stopPropagation();
-            if (confirm(`Are you sure you want to delete "${chat.title}"?`)) {
-                socket.emit('delete_chat', { userId, chatId: chat.id });
-            }
-        };
-        listItem.appendChild(deleteButton);
-        listItem.addEventListener('click', () => switchChat(chat.id));
-        if (prepend) chatList.prepend(listItem);
-        else chatList.appendChild(listItem);
-    };
-
-    const renderChatList = (chats) => {
-        chatList.innerHTML = '';
-        chats.forEach(chat => addChatItemToSidebar(chat));
-    };
 
     // --- Event Listeners ---
+    newChatBtn.addEventListener('click', () => {
+        socket.emit('new_chat', { userId });
+    });
+
     messageForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const message = messageInput.value.trim();
-        if (!currentChatId) return alert("Please select a chat first.");
-        if (message) {
-            addMessage(message, 'user');
+        if (message && currentChatId) {
             socket.emit('message', { userId, chatId: currentChatId, message });
+            appendMessage('user', message);
             messageInput.value = '';
-            showTypingIndicator(true);
-            currentAiBubble = null;
+            disableMessageForm();
         }
     });
-
-    newChatButton.addEventListener('click', () => socket.emit('new_chat', { userId }));
+    
+    stopButton.addEventListener('click', () => {
+        if (currentChatId) {
+            socket.emit('stop_generation', { userId, chatId: currentChatId });
+            enableMessageForm();
+        }
+    });
 
     // --- Socket.IO Handlers ---
-    socket.on('connect', () => socket.emit('get_chats', { userId }));
-
-    socket.on('chat_list', (data) => {
-        renderChatList(data.chats);
-        if (data.chats.length > 0 && !currentChatId) {
-            switchChat(data.chats[0].id);
-        } else if (data.chats.length === 0) {
-            socket.emit('new_chat', { userId });
-        }
+    socket.on('connect', () => {
+        console.log('Connected to server');
+        socket.emit('get_chats', { userId });
     });
 
-    socket.on('chat_history', (data) => {
-        if (data.chatId !== currentChatId) return;
-        chatContainer.innerHTML = '';
-        data.history.forEach(msg => addMessage(msg.content, msg.role));
+    socket.on('chat_list', (data) => {
+        chatList.innerHTML = '';
+        data.chats.forEach(chat => {
+            const li = document.createElement('li');
+            li.textContent = chat.title;
+            li.dataset.chatId = chat.id;
+            li.addEventListener('click', () => {
+                currentChatId = chat.id;
+                socket.emit('get_history', { userId, chatId: currentChatId });
+                document.querySelectorAll('#chat-list li').forEach(item => item.classList.remove('active'));
+                li.classList.add('active');
+            });
+            chatList.appendChild(li);
+        });
     });
 
     socket.on('chat_created', (chat) => {
-        addChatItemToSidebar(chat, true);
-        switchChat(chat.id);
+        socket.emit('get_chats', { userId });
+        currentChatId = chat.id;
+        socket.emit('get_history', { userId, chatId: currentChatId });
     });
-
-    socket.on('chat_deleted', (data) => {
-        document.querySelector(`li[data-chat-id="${data.chatId}"]`)?.remove();
-        if (currentChatId === data.chatId) {
-            currentChatId = null;
-            const firstChat = chatList.querySelector('li');
-            if (firstChat) switchChat(firstChat.dataset.chatId);
-            else socket.emit('new_chat', { userId });
-        }
-    });
-
-    socket.on('chat_title_updated', (data) => {
-        const chatItem = document.querySelector(`li[data-chat-id="${data.chatId}"] a`);
-        if (chatItem) chatItem.textContent = data.title;
-        if (data.chatId === currentChatId) chatTitle.textContent = data.title;
+    
+    socket.on('chat_history', (data) => {
+        chatHistory.innerHTML = '';
+        currentChatId = data.chatId;
+        data.history.forEach(msg => appendMessage(msg.role, msg.content));
+        document.querySelectorAll('#chat-list li').forEach(item => {
+            item.classList.toggle('active', item.dataset.chatId === currentChatId);
+        });
+        enableMessageForm();
     });
 
     socket.on('response', (data) => {
         if (data.chatId !== currentChatId) return;
-        showTypingIndicator(false);
-        if (data.first_chunk) {
-            currentAiBubble = addMessage('', 'ai');
+
+        let lastMessage = chatHistory.querySelector('.message:last-child');
+        if (data.first_chunk || !lastMessage || lastMessage.dataset.role !== 'assistant') {
+            appendMessage('assistant', data.content);
+        } else {
+            lastMessage.querySelector('.content').innerHTML += data.content;
         }
-        if (currentAiBubble) {
-            chunkQueue.push(data.content);
-            typeWriter();
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    });
+    
+    socket.on('response_finished', (data) => {
+        if (data.chatId === currentChatId) {
+            enableMessageForm();
         }
     });
 
     socket.on('response_error', (data) => {
-        showTypingIndicator(false);
-        addMessage(data.error, 'error');
+        appendMessage('assistant error', data.error);
+        enableMessageForm();
     });
+    
+    socket.on('chat_title_updated', (data) => {
+        if (data.chatId === currentChatId) {
+             const chatListItem = chatList.querySelector(`[data-chat-id="${data.chatId}"]`);
+             if (chatListItem) {
+                 chatListItem.textContent = data.title;
+             }
+        }
+    });
+
+    function appendMessage(role, content) {
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message', `${role}-message`);
+        messageDiv.dataset.role = role;
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.classList.add('content');
+        contentDiv.textContent = content;
+        
+        messageDiv.appendChild(contentDiv);
+        chatHistory.appendChild(messageDiv);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
 });

@@ -3,50 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TheroGPT 2.0</title>
+    <title>TheroGPT</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
-    <div id="app-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>TheroGPT</h2>
-            </div>
-            <div class="sidebar-content">
-                <button id="new-chat-button" class="sidebar-button">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="icon">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    New Chat
-                </button>
-                <nav id="chat-list-nav">
-                    <ul id="chat-list">
-                        </ul>
-                </nav>
-            </div>
-        </aside>
-        <main class="chat-area">
-            <header class="app-header">
-                <h1 id="chat-title">Your Personal AI Assistant</h1>
-            </header>
-            <div id="chat-container">
+    <div class="container">
+        <div class="sidebar">
+            <button id="new-chat-btn">New Chat</button>
+            <ul id="chat-list">
+                </ul>
+        </div>
+        <div class="chat-area">
+            <div id="chat-history">
+                <div class="welcome-message">
+                    <h1>TheroGPT</h1>
+                    <p>Your personal AI assistant.</p>
                 </div>
-            <div id="form-container">
-                <div id="typing-indicator" style="display: none;">
-                    <span></span><span></span><span></span>
-                </div>
-                <form id="message-form">
-                    <input type="text" id="message-input" placeholder="Ask me anything..." autocomplete="off">
-                    <button type="submit" id="send-button">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="icon">
-                            <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
-                        </svg>
-                    </button>
-                </form>
             </div>
-        </main>
+            <form id="message-form">
+                <textarea id="message-input" placeholder="Message TheroGPT..." required></textarea>
+                <button type="submit" id="send-button">Send</button>
+                <button type="button" id="stop-button" style="display: none;">Stop</button>
+            </form>
+        </div>
     </div>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
