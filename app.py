@@ -23,6 +23,7 @@ CHAT_SESSIONS_DIR = 'chat_sessions'
 # --- State Management ---
 stop_requests = {}
 
+
 # --- Helper Functions ---
 
 def get_chat_filepath(user_id, chat_id):
@@ -59,11 +60,6 @@ def index():
 @socketio.on('connect')
 def handle_connect():
     print(f"Client connected: {request.sid}")
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    print(f"Client disconnected: {request.sid}")
-    stop_requests.pop(request.sid, None)
 
 @socketio.on('get_chats')
 def handle_get_chats(data):
@@ -106,11 +102,6 @@ def handle_delete_chat(data):
         os.remove(filepath)
     socketio.emit('chat_deleted', {'chatId': chat_id}, to=request.sid)
 
-@socketio.on('stop_generation')
-def handle_stop_generation(data):
-    stop_requests[request.sid] = True
-    print(f"Client {request.sid} requested to stop generation.")
-
 @socketio.on('message')
 def handle_message(data):
     user_id, chat_id, user_message = data.get('userId'), data.get('chatId'), data.get('message')
@@ -141,7 +132,7 @@ def handle_message(data):
             socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
             if first_chunk:
                 first_chunk = False
-            eventlet.sleep(0.01) # Yield control to allow other events to be processed
+            eventlet.sleep(0.01)
 
         history.append({'role': 'assistant', 'content': ai_response_content})
         save_chat_history(user_id, chat_id, history)
@@ -153,9 +144,20 @@ def handle_message(data):
     finally:
         socketio.emit('response_finished', {'chatId': chat_id}, to=request.sid)
         stop_requests.pop(request.sid, None)
+        
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f"Client disconnected: {request.sid}")
+    stop_requests.pop(request.sid, None)
 
+# ... (keep existing handlers)
 
+@socketio.on('stop_generation')
+def handle_stop_generation(data):
+    stop_requests[request.sid] = True
+    print(f"Client {request.sid} requested to stop generation.")
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
         os.makedirs(CHAT_SESSIONS_DIR)
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+
