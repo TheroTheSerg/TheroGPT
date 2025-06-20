@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 import eventlet
-import datetime  # <-- Added this line
+import datetime
 from eventlet import tpool
 from duckduckgo_search import DDGS
 import requests
@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, request
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import ollama
 
@@ -34,7 +34,6 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-# --- vvv THIS SECTION IS UPDATED FOR ROBUSTNESS vvv ---
 
 def fetch_and_parse(url):
     """
@@ -60,14 +59,17 @@ def fetch_and_parse(url):
         
         main_content = soup.find('main') or soup.find('article') or soup.body
         if main_content:
-            # This is the line that can cause recursion errors
-            text = main_content.get_text(separator='\n', strip=True)
+            # --- FIX FOR RECURSION ERROR ---
+            # Instead of a deep recursive call, find all individual text nodes and join them.
+            # This is less likely to hit Python's recursion depth limit on complex HTML.
+            text_nodes = main_content.find_all(string=True)
+            text = "\n".join(t.strip() for t in text_nodes if t.parent.name not in ['script', 'style'])
+            # --- END OF FIX ---
         else:
             return None
         
         return text
 
-    # Catch request errors and the new RecursionError
     except (requests.exceptions.RequestException, RecursionError) as e:
         print(f"Request or parsing failed for {url}: {e}")
         return None
@@ -90,6 +92,7 @@ def search_the_web(query):
 
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
+        # Using tpool to run fetch_and_parse concurrently
         fetched_contents = [tpool.execute(fetch_and_parse, url) for url in urls_to_fetch]
 
         context_parts = []
@@ -110,8 +113,6 @@ def search_the_web(query):
     except Exception as e:
         print(f"An error occurred in the main search function: {e}")
         return "Sorry, an error occurred during the web search."
-
-# --- ^^^ END OF UPDATED SECTION ^^^ ---
 
 def load_chat_history(user_id, chat_id, use_internet=False):
     filepath = get_chat_filepath(user_id, chat_id)
@@ -164,7 +165,7 @@ def handle_get_chats(data):
 
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     if not os.path.exists(user_dir):
-        socketio.emit('chat_list', {'chats': []}, to=request.sid)
+        emit('chat_list', {'chats': []}, to=request.sid)
         return
 
     chat_files = [f for f in os.listdir(user_dir) if f.endswith('.json')]
@@ -174,14 +175,14 @@ def handle_get_chats(data):
         history = load_chat_history(user_id, chat_id)
         title = next((msg['content'] for msg in history if msg['role'] == 'user'), 'New Chat')
         chats.append({'id': chat_id, 'title': title[:50]})
-    socketio.emit('chat_list', {'chats': chats}, to=request.sid)
+    emit('chat_list', {'chats': chats}, to=request.sid)
 
 @socketio.on('get_history')
 def handle_get_history(data):
     user_id, chat_id = data.get('userId'), data.get('chatId')
     history = load_chat_history(user_id, chat_id)
     display_history = [msg for msg in history if msg['role'] != 'system']
-    socketio.emit('chat_history', {'chatId': chat_id, 'history': display_history}, to=request.sid)
+    emit('chat_history', {'chatId': chat_id, 'history': display_history}, to=request.sid)
 
 @socketio.on('new_chat')
 def handle_new_chat(data):
@@ -189,7 +190,7 @@ def handle_new_chat(data):
     if not user_id: return
     chat_id = str(uuid.uuid4())
     save_chat_history(user_id, chat_id, [])
-    socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
+    emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
 
 @socketio.on('delete_chat')
 def handle_delete_chat(data):
@@ -197,7 +198,7 @@ def handle_delete_chat(data):
     filepath = get_chat_filepath(user_id, chat_id)
     if os.path.exists(filepath):
         os.remove(filepath)
-    socketio.emit('chat_deleted', {'chatId': chat_id}, to=request.sid)
+    emit('chat_deleted', {'chatId': chat_id}, to=request.sid)
 
 @socketio.on('stop_generation')
 def handle_stop_generation(data):
@@ -214,35 +215,48 @@ def handle_message(data):
     history = load_chat_history(user_id, chat_id, use_internet)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
     
-    # --- vvv NEW: DIRECTLY HANDLE DATE/TIME QUERIES vvv ---
-    if use_internet and any(keyword in user_message.lower() for keyword in ['date', 'time', 'today']):
+    # --- vvv REVISED: DIRECTLY HANDLE SPECIFIC DATE/TIME QUERIES vvv ---
+    time_query_triggers = [
+        'what time is it', 'what is the time', 'current time', 'time', "what's the time"
+    ]
+    date_query_triggers = [
+        "what's today's date", 'what is the date', 'what is today', 'date', 'today'
+    ]
+    normalized_message = user_message.lower().strip().rstrip('?').strip()
+
+    if use_internet and (normalized_message in time_query_triggers or normalized_message in date_query_triggers):
         now = datetime.datetime.now()
         date_str = now.strftime("%A, %B %d, %Y")
         time_str = now.strftime("%I:%M %p")
-        ai_response_content = f"Today is {date_str}, and the current time is {time_str}."
+
+        if normalized_message in time_query_triggers:
+            ai_response_content = f"The current time is {time_str}."
+        else: # Covers all date_query_triggers
+            ai_response_content = f"Today is {date_str}."
         
         history.append({'role': 'user', 'content': user_message})
         history.append({'role': 'assistant', 'content': ai_response_content})
         save_chat_history(user_id, chat_id, history)
         
-        socketio.emit('response', {'content': ai_response_content, 'first_chunk': True, 'chatId': chat_id}, to=request.sid)
-        socketio.emit('response_end', {'chatId': chat_id, 'status': 'completed'}, to=request.sid)
+        emit('response', {'content': ai_response_content, 'first_chunk': True, 'chatId': chat_id}, to=request.sid)
+        emit('response_end', {'chatId': chat_id, 'status': 'completed'}, to=request.sid)
         return
-    # --- ^^^ END OF DATE/TIME HANDLING ^^^ ---
+    # --- ^^^ END OF REVISED DATE/TIME HANDLING ^^^ ---
 
     if use_internet:
         search_results = search_the_web(user_message)
+        # We now add the search results as a new system message before the user's message
         history.append({'role': 'system', 'content': f"Web search results:\n{search_results}"})
 
     history.append({'role': 'user', 'content': user_message})
-    save_chat_history(user_id, chat_id, history)
-
+    
     if is_first_user_message:
-        socketio.emit('chat_title_updated', {'chatId': chat_id, 'title': user_message[:50]})
+        emit('chat_title_updated', {'chatId': chat_id, 'title': user_message[:50]})
 
     try:
         stop_generating[request.sid] = False
         client = ollama.Client(host=OLLAMA_HOST)
+        # The history passed to the model now includes the latest search results
         stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
 
         ai_response_content = ""
@@ -254,20 +268,25 @@ def handle_message(data):
 
             chunk_content = chunk['message']['content']
             ai_response_content += chunk_content
-            socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
+            emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
             if first_chunk:
                 first_chunk = False
-
-        history.append({'role': 'assistant', 'content': ai_response_content})
-        save_chat_history(user_id, chat_id, history)
+        
+        # Save the AI's response to the history
+        if ai_response_content: # Only append if there was a response
+             history.append({'role': 'assistant', 'content': ai_response_content})
+        
+        # Clean up history by removing search results before saving
+        history_to_save = [msg for msg in history if not (msg['role'] == 'system' and msg.get('content', '').startswith('Web search results'))]
+        save_chat_history(user_id, chat_id, history_to_save)
 
     except Exception as e:
         print(f"!!! ERROR communicating with Ollama: {e}")
-        socketio.emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
+        emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
     
     finally:
         status = 'stopped' if stop_generating.get(request.sid) else 'completed'
-        socketio.emit('response_end', {'chatId': chat_id, 'status': status}, to=request.sid)
+        emit('response_end', {'chatId': chat_id, 'status': status}, to=request.sid)
         if request.sid in stop_generating:
             del stop_generating[request.sid]
 
