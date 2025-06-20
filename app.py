@@ -17,7 +17,7 @@ socketio = SocketIO(app, async_mode='eventlet')
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
-SYSTEM_PROMPT = "You are TheroGPT, a helpful AI assistant."
+SYSTEM_PROMPT = "You are TheroGPT, a helpful AI assistant. You do NOT have access to the internet or live search results."
 
 # --- Helper Functions ---
 
