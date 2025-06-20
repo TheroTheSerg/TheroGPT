@@ -2,7 +2,7 @@ import os
 import json
 import uuid
 import eventlet
-from eventlet import tpool  # <-- Added this line
+from eventlet import tpool
 from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
@@ -33,55 +33,88 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-# --- vvv THIS ENTIRE FUNCTION HAS BEEN REPLACED vvv ---
+# --- vvv THIS IS THE NEW, IMPROVED WEB SEARCH CODE vvv ---
+
+def fetch_and_parse(url):
+    """
+    Fetches content from a URL, cleans it, and extracts text.
+    This function is run in a thread pool to avoid blocking the server.
+    """
+    try:
+        print(f"Fetching content from: {url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, timeout=5, headers=headers)
+        response.raise_for_status()
+
+        if 'text/html' not in response.headers.get('Content-Type', ''):
+            print(f"Skipping non-HTML content at {url}")
+            return None
+        
+        soup = BeautifulSoup(response.content, 'lxml')
+        
+        # Remove common non-content tags
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form']):
+            tag.decompose()
+        
+        # Prioritize main content tags, falling back to the whole body
+        main_content = soup.find('main') or soup.find('article') or soup.body
+        if main_content:
+            text = main_content.get_text(separator='\n', strip=True)
+        else:
+            return None # Page has no body or main content
+        
+        return text
+
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed for {url}: {e}")
+        return None
+    except Exception as e:
+        print(f"Error processing {url}: {e}")
+        return None
+
 def search_the_web(query):
     """
-    Performs a web search using DuckDuckGo, formats the results,
-    and fetches the content of the top result in an eventlet-friendly way.
+    Performs a web search, fetches content from top results concurrently,
+    and formats them for the language model.
     """
     print(f"Performing web search for: {query}")
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=5))
-            if not results:
-                return "No search results found."
 
-            # Fetch content from the first result
-            top_result_content = ""
-            if results and results[0].get('href'):
-                try:
-                    url = results[0]['href']
-                    print(f"Fetching content from: {url}")
-                    
-                    # Use eventlet's thread pool to run the blocking requests.get call
-                    response = tpool.execute(requests.get, url, timeout=5)
-                    response.raise_for_status()
+        if not results:
+            return "No search results found."
 
-                    # Use BeautifulSoup to extract text content
-                    soup = BeautifulSoup(response.content, 'lxml')
-                    for script_or_style in soup(["script", "style"]):
-                        script_or_style.decompose()
-                    text = soup.get_text(separator='\n', strip=True)
-                    top_result_content = f"\n\n--- Content from Top Result ---\n{text[:2000]}\n--- End of Content ---"
-                except Exception as e:
-                    print(f"Error fetching content from {results[0]['href']}: {e}")
-                    top_result_content = "\n\n[Could not fetch content from the top result.]"
+        # Concurrently fetch the top 3 results
+        urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
+        
+        # Use eventlet's tpool to run blocking I/O in separate threads
+        fetched_contents = list(tpool.imap(fetch_and_parse, urls_to_fetch))
 
-            # Enumerate and format the results for clarity
-            formatted_results = []
-            for i, r in enumerate(results, 1):
-                formatted_results.append(
-                    f"[{i}] Title: {r.get('title', 'N/A')}\n"
-                    f"Snippet: {r.get('body', 'N/A')}\n"
-                    f"URL: {r.get('href', 'N/A')}"
+        # Prepare a structured context for the AI model
+        context_parts = []
+        for i, content in enumerate(fetched_contents):
+            if content:
+                result_meta = results[i]
+                context_parts.append(
+                    f"Source [{i+1}]: {result_meta.get('title', 'N/A')}\n"
+                    f"URL: {result_meta.get('href', 'N/A')}\n"
+                    f"CONTENT:\n{content[:2500]}\n" # Limit content per source
                 )
+
+        if not context_parts:
+            # Fallback to snippets if no content could be fetched
+            return "Could not retrieve content from any search results. Please try a different query."
             
-            return "\n\n".join(formatted_results) + top_result_content
+        return "\n---\n".join(context_parts)
 
     except Exception as e:
-        print(f"Error during web search: {e}")
-        return "An error occurred during the web search. Please try again later."
-# --- ^^^ THIS ENTIre FUNCTION HAS BEEN REPLACED ^^^ ---
+        print(f"An error occurred in the main search function: {e}")
+        return "Sorry, an error occurred during the web search."
+
+# --- ^^^ END OF NEW WEB SEARCH CODE ^^^ ---
 
 
 def load_chat_history(user_id, chat_id, use_internet=False):
