@@ -3,12 +3,11 @@ import json
 import uuid
 import eventlet
 import datetime
-import re  # <-- Added re
-from concurrent.futures import ThreadPoolExecutor # <-- Kept for concurrency
+import re
+from concurrent.futures import ThreadPoolExecutor
 from duckduckgo_search import DDGS
 import requests
-from html.parser import HTMLParser
-
+import html2text
 
 eventlet.monkey_patch()
 
@@ -28,34 +27,15 @@ CHAT_SESSIONS_DIR = 'chat_sessions'
 SYSTEM_PROMPT_DEFAULT = "You are TheroGPT, a helpful AI assistant. You do NOT have access to the internet or live search results."
 SYSTEM_PROMPT_WEB = "You are TheroGPT, a helpful AI assistant. You have been provided with a series of web search results. Please use them to answer the user's query."
 
-stop_generating = {} # Tracks stop requests by session ID
+stop_generating = {}
 
 # --- Helper Functions ---
-
-class SimpleHTMLStripper(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.fed = []
-    def handle_data(self, d):
-        self.fed.append(d)
-    def get_data(self):
-        return ' '.join(self.fed)
-
-def strip_html_tags(html):
-    s = SimpleHTMLStripper()
-    s.feed(html)
-    return s.get_data()
-
 
 def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-
 def fetch_and_parse(url):
-    """
-    Fetches content and extracts text using regular expressions to avoid recursion errors.
-    """
     try:
         print(f"Fetching content from: {url}")
         headers = {
@@ -71,14 +51,16 @@ def fetch_and_parse(url):
 
         html = response.text
 
-        # Optional safety cap
-        if len(html) > 1_000_000:
-            html = html[:1_000_000]
+        if len(html) > 2_000_000:
+            html = html[:2_000_000]
 
-        # Strip HTML tags using HTMLParser
-        text = strip_html_tags(html)
-        # Decode common HTML entities
-        text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+        text_maker = html2text.HTML2Text()
+        text_maker.ignore_links = False
+        text_maker.ignore_images = True
+        text_maker.ignore_emphasis = False
+        text_maker.body_width = 0
+
+        text = text_maker.handle(html)
         text = re.sub(r'\s+', ' ', text).strip()
 
         return text
@@ -91,9 +73,6 @@ def fetch_and_parse(url):
         return None
 
 def search_the_web(query):
-    """
-    Performs a web search, fetching content concurrently using standard threads.
-    """
     print(f"Performing web search for: {query}")
     try:
         with DDGS() as ddgs:
@@ -153,7 +132,6 @@ def save_chat_history(user_id, chat_id, history):
             json.dump(history, f, indent=4, ensure_ascii=False)
     except IOError as e:
         print(f"Error saving chat history for {chat_id}: {e}")
-
 
 # --- Socket.IO Event Handlers ---
 
@@ -229,11 +207,11 @@ def handle_message(data):
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
     
     time_query_triggers = [
-        'what time is it', 'what is the time', 'current time', 'time', "what's the time"
+        'what time is it', 'what is the time', "what's the time"
     ]
     date_query_triggers = [
         "what's today's date", "what is todays date", "what is today's date", 
-        'what is the date', 'what is today', 'date', 'today'
+        'what is the date', 'what is today'
     ]
     normalized_message = user_message.lower().strip().rstrip('?').strip()
 
