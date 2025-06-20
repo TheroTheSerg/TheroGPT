@@ -10,7 +10,8 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import ollama
-from Google Search import search
+from googlesearch import search
+
 
 app = Flask(__name__)
 CORS(app)
