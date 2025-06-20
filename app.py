@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import eventlet
+import datetime  # <-- Added this line
 from eventlet import tpool
 from duckduckgo_search import DDGS
 import requests
@@ -33,7 +34,7 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-# --- vvv THIS IS THE NEW, IMPROVED WEB SEARCH CODE vvv ---
+# --- vvv THIS SECTION IS UPDATED FOR ROBUSTNESS vvv ---
 
 def fetch_and_parse(url):
     """
@@ -54,21 +55,21 @@ def fetch_and_parse(url):
         
         soup = BeautifulSoup(response.content, 'lxml')
         
-        # Remove common non-content tags
         for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form']):
             tag.decompose()
         
-        # Prioritize main content tags, falling back to the whole body
         main_content = soup.find('main') or soup.find('article') or soup.body
         if main_content:
+            # This is the line that can cause recursion errors
             text = main_content.get_text(separator='\n', strip=True)
         else:
-            return None # Page has no body or main content
+            return None
         
         return text
 
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed for {url}: {e}")
+    # Catch request errors and the new RecursionError
+    except (requests.exceptions.RequestException, RecursionError) as e:
+        print(f"Request or parsing failed for {url}: {e}")
         return None
     except Exception as e:
         print(f"Error processing {url}: {e}")
@@ -87,14 +88,10 @@ def search_the_web(query):
         if not results:
             return "No search results found."
 
-        # Concurrently fetch the top 3 results
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
-        # *** THIS IS THE CORRECTED LINE ***
-        # Use tpool.execute in a list comprehension to run fetches in parallel threads
         fetched_contents = [tpool.execute(fetch_and_parse, url) for url in urls_to_fetch]
 
-        # Prepare a structured context for the AI model
         context_parts = []
         for i, content in enumerate(fetched_contents):
             if content:
@@ -102,11 +99,10 @@ def search_the_web(query):
                 context_parts.append(
                     f"Source [{i+1}]: {result_meta.get('title', 'N/A')}\n"
                     f"URL: {result_meta.get('href', 'N/A')}\n"
-                    f"CONTENT:\n{content[:2500]}\n" # Limit content per source
+                    f"CONTENT:\n{content[:2500]}\n"
                 )
 
         if not context_parts:
-            # Fallback to snippets if no content could be fetched
             return "Could not retrieve content from any search results. Please try a different query."
             
         return "\n---\n".join(context_parts)
@@ -115,8 +111,7 @@ def search_the_web(query):
         print(f"An error occurred in the main search function: {e}")
         return "Sorry, an error occurred during the web search."
 
-# --- ^^^ END OF NEW WEB SEARCH CODE ^^^ ---
-
+# --- ^^^ END OF UPDATED SECTION ^^^ ---
 
 def load_chat_history(user_id, chat_id, use_internet=False):
     filepath = get_chat_filepath(user_id, chat_id)
@@ -130,7 +125,7 @@ def load_chat_history(user_id, chat_id, use_internet=False):
             if not history or history[0].get('role') != 'system':
                 history.insert(0, {'role': 'system', 'content': system_prompt})
             else:
-                history[0]['content'] = system_prompt # Update system prompt
+                history[0]['content'] = system_prompt
             return history
     except (json.JSONDecodeError, IOError) as e:
         print(f"Error loading chat history for {chat_id}: {e}")
@@ -218,6 +213,22 @@ def handle_message(data):
 
     history = load_chat_history(user_id, chat_id, use_internet)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
+    
+    # --- vvv NEW: DIRECTLY HANDLE DATE/TIME QUERIES vvv ---
+    if use_internet and any(keyword in user_message.lower() for keyword in ['date', 'time', 'today']):
+        now = datetime.datetime.now()
+        date_str = now.strftime("%A, %B %d, %Y")
+        time_str = now.strftime("%I:%M %p")
+        ai_response_content = f"Today is {date_str}, and the current time is {time_str}."
+        
+        history.append({'role': 'user', 'content': user_message})
+        history.append({'role': 'assistant', 'content': ai_response_content})
+        save_chat_history(user_id, chat_id, history)
+        
+        socketio.emit('response', {'content': ai_response_content, 'first_chunk': True, 'chatId': chat_id}, to=request.sid)
+        socketio.emit('response_end', {'chatId': chat_id, 'status': 'completed'}, to=request.sid)
+        return
+    # --- ^^^ END OF DATE/TIME HANDLING ^^^ ---
 
     if use_internet:
         search_results = search_the_web(user_message)
