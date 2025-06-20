@@ -2,23 +2,27 @@ import os
 import json
 import uuid
 import traceback
-import eventlet # Import eventlet
-eventlet.monkey_patch() # Patch standard libraries for async compatibility
+import re
+import eventlet
+eventlet.monkey_patch()
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import ollama
+from Google Search import search
 
 app = Flask(__name__)
 CORS(app)
-# Initialize SocketIO with async_mode='eventlet'
 socketio = SocketIO(app, async_mode='eventlet')
 
 # --- Configuration ---
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
+SYSTEM_PROMPT = """You are TheroGPT, a helpful AI assistant. You have the ability to search the internet for current information.
+To search the internet, output `[search: QUERY]` where QUERY is what you want to search for.
+You will be provided with the search results, and you can then use them to answer the user's question."""
 
 # --- Helper Functions ---
 
@@ -33,10 +37,14 @@ def load_chat_history(user_id, chat_id):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
-            return json.loads(content) if content else []
+            # Start with the system prompt if the history is empty or doesn't have it
+            history = json.loads(content) if content else []
+            if not history or history[0].get('role') != 'system':
+                history.insert(0, {'role': 'system', 'content': SYSTEM_PROMPT})
+            return history
     except (json.JSONDecodeError, IOError) as e:
         print(f"Error loading chat history for {chat_id}: {e}")
-        return []
+        return [{'role': 'system', 'content': SYSTEM_PROMPT}]
 
 def save_chat_history(user_id, chat_id, history):
     filepath = get_chat_filepath(user_id, chat_id)
@@ -80,7 +88,9 @@ def handle_get_chats(data):
 def handle_get_history(data):
     user_id, chat_id = data.get('userId'), data.get('chatId')
     history = load_chat_history(user_id, chat_id)
-    socketio.emit('chat_history', {'chatId': chat_id, 'history': history}, to=request.sid)
+    # Don't show the system prompt to the user
+    display_history = [msg for msg in history if msg['role'] != 'system']
+    socketio.emit('chat_history', {'chatId': chat_id, 'history': display_history}, to=request.sid)
 
 @socketio.on('new_chat')
 def handle_new_chat(data):
@@ -112,7 +122,33 @@ def handle_message(data):
 
     try:
         client = ollama.Client(host=OLLAMA_HOST)
-        stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
+
+        # First, get the AI's response to see if it wants to search
+        initial_response = client.chat(model=OLLAMA_MODEL, messages=history, stream=False)
+        ai_message = initial_response['message']['content']
+
+        search_match = re.search(r'\[search:\s*(.*)\]', ai_message)
+
+        if search_match:
+            query = search_match.group(1)
+            history.append({'role': 'assistant', 'content': ai_message}) # Save the search request
+            
+            try:
+                search_results = search(queries=[query])
+                search_context = ""
+                for result in search_results:
+                    for item in result.results:
+                        search_context += f"URL: {item.url}\nTitle: {item.source_title}\nSnippet: {item.snippet}\n\n"
+                history.append({'role': 'tool', 'content': search_context})
+            except Exception as e:
+                print(f"Error during Google Search: {e}")
+                history.append({'role': 'tool', 'content': 'There was an error while searching the internet.'})
+
+            # Now, get the final answer with the search results
+            stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
+        else:
+            # If no search is needed, just stream the initial response
+            stream = (chunk for chunk in [initial_response])
 
         ai_response_content = ""
         first_chunk = True
@@ -124,7 +160,6 @@ def handle_message(data):
                 first_chunk = False
 
         history.append({'role': 'assistant', 'content': ai_response_content})
-        # THIS IS THE LINE I FIXED
         save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
