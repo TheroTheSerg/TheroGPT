@@ -31,12 +31,28 @@ def get_chat_filepath(user_id, chat_id):
     return os.path.join(user_dir, f"{chat_id}.json")
 
 def search_the_web(query):
+    """
+    Performs a web search using DuckDuckGo, formats the results, and handles errors.
+    """
+    print(f"Performing web search for: {query}")
     try:
-        results = DDGS().text(query, max_results=5)
-        return "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+            if not results:
+                return "No search results found."
+            
+            # Enumerate and format the results for clarity
+            formatted_results = []
+            for i, r in enumerate(results, 1):
+                formatted_results.append(
+                    f"[{i}] Title: {r.get('title', 'N/A')}\n"
+                    f"Snippet: {r.get('body', 'N/A')}\n"
+                    f"URL: {r.get('href', 'N/A')}"
+                )
+            return "\n\n".join(formatted_results)
     except Exception as e:
         print(f"Error during web search: {e}")
-        return "An error occurred while searching the web."
+        return "An error occurred during the web search. Please try again later."
 
 def load_chat_history(user_id, chat_id, use_internet=False):
     filepath = get_chat_filepath(user_id, chat_id)
