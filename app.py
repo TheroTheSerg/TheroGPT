@@ -155,26 +155,36 @@ def handle_message(data):
                     search_context += f"URL: {url}\nTitle: {title}\nSnippet: {snippet}\n\n"
                 history.append({'role': 'tool', 'content': search_context})
             except Exception as e:
+                traceback.print_exc()  # Add this!
                 print(f"Error during Google Search: {e}")
                 history.append({'role': 'tool', 'content': 'There was an error while searching the internet.'})
 
             # Now, get the final answer with the search results
             stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
+            ai_response_content = ""
+            first_chunk = True
+            for chunk in stream:
+                chunk_content = chunk['message']['content']
+                ai_response_content += chunk_content
+                socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
+                if first_chunk:
+                    first_chunk = False
+
+            history.append({'role': 'assistant', 'content': ai_response_content})
+            save_chat_history(user_id, chat_id, history)
         else:
             # If no search is needed, just stream the initial response
-            stream = (chunk for chunk in [initial_response])
+            ai_response_content = ""
+            first_chunk = True
+            for chunk in [initial_response]:
+                chunk_content = chunk['message']['content']
+                ai_response_content += chunk_content
+                socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
+                if first_chunk:
+                    first_chunk = False
 
-        ai_response_content = ""
-        first_chunk = True
-        for chunk in stream:
-            chunk_content = chunk['message']['content']
-            ai_response_content += chunk_content
-            socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
-            if first_chunk:
-                first_chunk = False
-
-        history.append({'role': 'assistant', 'content': ai_response_content})
-        save_chat_history(user_id, chat_id, history)
+            history.append({'role': 'assistant', 'content': ai_response_content})
+            save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
         print(f"!!! ERROR communicating with Ollama: {e}")
