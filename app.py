@@ -7,8 +7,8 @@ import re  # <-- Added re
 from concurrent.futures import ThreadPoolExecutor # <-- Kept for concurrency
 from duckduckgo_search import DDGS
 import requests
-# BeautifulSoup is no longer used
-# from bs4 import BeautifulSoup
+from html.parser import HTMLParser
+
 
 eventlet.monkey_patch()
 
@@ -32,6 +32,21 @@ stop_generating = {} # Tracks stop requests by session ID
 
 # --- Helper Functions ---
 
+class SimpleHTMLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.fed = []
+    def handle_data(self, d):
+        self.fed.append(d)
+    def get_data(self):
+        return ' '.join(self.fed)
+
+def strip_html_tags(html):
+    s = SimpleHTMLStripper()
+    s.feed(html)
+    return s.get_data()
+
+
 def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
@@ -54,16 +69,16 @@ def fetch_and_parse(url):
             print(f"Skipping non-HTML content at {url}")
             return None
 
-        # --- REGEX-BASED HTML STRIPPING ---
         html = response.text
 
-        # 1. Remove script and style tags and their content
-        html = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        # 2. Remove all remaining HTML tags, replacing them with a space
-        text = re.sub(r'<[^>]+>', ' ', html)
-        # 3. Decode common HTML entities
+        # Optional safety cap
+        if len(html) > 1_000_000:
+            html = html[:1_000_000]
+
+        # Strip HTML tags using HTMLParser
+        text = strip_html_tags(html)
+        # Decode common HTML entities
         text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
-        # 4. Consolidate whitespace
         text = re.sub(r'\s+', ' ', text).strip()
 
         return text
