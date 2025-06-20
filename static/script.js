@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const socket = io();
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
+    const stopBtn = document.getElementById('stop-btn');
     const chatWindow = document.getElementById('chat-window');
     const newChatBtn = document.getElementById('new-chat-btn');
     const chatList = document.getElementById('chat-list');
@@ -23,6 +24,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentChatId = null;
     let currentResponseContent = '';
+    let isResponding = false;
+
+    // --- UI State Management ---
+    function setRespondingState(responding) {
+        isResponding = responding;
+        messageInput.disabled = responding;
+        sendBtn.style.display = responding ? 'none' : 'flex';
+        stopBtn.style.display = responding ? 'flex' : 'none';
+        internetSearchToggle.disabled = responding;
+    }
 
     function createChatElement(chat) {
         const chatElement = document.createElement('div');
@@ -30,30 +41,40 @@ document.addEventListener('DOMContentLoaded', () => {
         chatElement.dataset.chatId = chat.id;
         chatElement.textContent = chat.title;
         chatElement.addEventListener('click', () => {
+            if (isResponding) return;
             currentChatId = chat.id;
-            currentResponseContent = ''; // Reset content buffer
+            currentResponseContent = '';
             chatWindow.innerHTML = '';
             socket.emit('get_history', { userId, chatId: chat.id });
+            document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+            chatElement.classList.add('active');
         });
         return chatElement;
     }
 
-    function appendMessage(sender, text) {
+    function appendMessage(sender, text, isStreaming = false) {
         const messageElement = document.createElement('div');
         messageElement.classList.add('message', sender);
-        if (sender === 'assistant') {
-            messageElement.innerHTML = converter.makeHtml(text);
-        } else {
-            messageElement.textContent = text;
+        if (isStreaming) {
+            messageElement.classList.add('streaming');
         }
+        
+        const contentElement = document.createElement('div');
+        if (sender === 'assistant') {
+            contentElement.innerHTML = converter.makeHtml(text);
+        } else {
+            contentElement.textContent = text;
+        }
+        messageElement.appendChild(contentElement);
         chatWindow.appendChild(messageElement);
         chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
     function sendMessage() {
         const message = messageInput.value.trim();
-        if (message) {
+        if (message && !isResponding) {
             appendMessage('user', message);
+            setRespondingState(true);
             socket.emit('message', { 
                 userId, 
                 chatId: currentChatId, 
@@ -61,11 +82,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 useInternet: internetSearchToggle.checked
             });
             messageInput.value = '';
-            messageInput.style.height = 'auto'; // Reset height after sending
+            messageInput.style.height = 'auto';
         }
     }
 
+    // --- Event Listeners ---
     sendBtn.addEventListener('click', sendMessage);
+
+    stopBtn.addEventListener('click', () => {
+        if (isResponding) {
+            socket.emit('stop_generation', { userId, chatId: currentChatId });
+        }
+    });
 
     messageInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -80,9 +108,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     newChatBtn.addEventListener('click', () => {
+        if (isResponding) return;
         socket.emit('new_chat', { userId });
     });
 
+    // --- Socket.IO Handlers ---
     socket.on('connect', () => {
         console.log('Connected to server');
         socket.emit('get_chats', { userId });
@@ -94,14 +124,17 @@ document.addEventListener('DOMContentLoaded', () => {
             chatList.appendChild(createChatElement(chat));
         });
         if (!currentChatId && data.chats.length > 0) {
-            data.chats[0] && chatList.children[0].click();
+            chatList.children[0].click();
+        } else if (currentChatId) {
+            const activeChat = document.querySelector(`.chat-item[data-chat-id="${currentChatId}"]`);
+            if(activeChat) activeChat.classList.add('active');
         }
     });
 
     socket.on('chat_created', (data) => {
         const chatElement = createChatElement(data);
         chatList.prepend(chatElement);
-        currentResponseContent = ''; // Reset content buffer
+        currentResponseContent = '';
         chatElement.click();
     });
 
@@ -113,22 +146,26 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     socket.on('response', (data) => {
-        if (data.chatId !== currentChatId) {
-            return; // Ignore responses for non-active chats
-        }
+        if (data.chatId !== currentChatId) return;
 
         if (data.first_chunk) {
-            currentResponseContent = ''; // Reset for a new response
-            const assistantMessage = document.createElement('div');
-            assistantMessage.classList.add('message', 'assistant');
-            chatWindow.appendChild(assistantMessage);
+            currentResponseContent = '';
+            appendMessage('assistant', '...', true);
         }
         
-        const lastMessage = chatWindow.querySelector('.message.assistant:last-child');
+        const lastMessage = chatWindow.querySelector('.message.assistant.streaming div');
         if (lastMessage) {
             currentResponseContent += data.content;
             lastMessage.innerHTML = converter.makeHtml(currentResponseContent);
             chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+    });
+
+    socket.on('response_end', (data) => {
+        if (data.chatId === currentChatId) {
+            const lastMessage = chatWindow.querySelector('.message.assistant.streaming');
+            if(lastMessage) lastMessage.classList.remove('streaming');
+            setRespondingState(false);
         }
     });
 

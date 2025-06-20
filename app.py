@@ -22,6 +22,8 @@ CHAT_SESSIONS_DIR = 'chat_sessions'
 SYSTEM_PROMPT_DEFAULT = "You are TheroGPT, a helpful AI assistant. You do NOT have access to the internet or live search results."
 SYSTEM_PROMPT_WEB = "You are TheroGPT, a helpful AI assistant. You have been provided with a series of web search results. Please use them to answer the user's query."
 
+stop_generating = {} # Tracks stop requests by session ID
+
 # --- Helper Functions ---
 
 def get_chat_filepath(user_id, chat_id):
@@ -74,6 +76,12 @@ def index():
 def handle_connect():
     print(f"Client connected: {request.sid}")
 
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f"Client disconnected: {request.sid}")
+    if request.sid in stop_generating:
+        del stop_generating[request.sid]
+
 @socketio.on('get_chats')
 def handle_get_chats(data):
     user_id = data.get('userId')
@@ -105,7 +113,7 @@ def handle_new_chat(data):
     user_id = data.get('userId')
     if not user_id: return
     chat_id = str(uuid.uuid4())
-    save_chat_history(user_id, chat_id, []) # <--- TYPO FIXED HERE
+    save_chat_history(user_id, chat_id, [])
     socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
 
 @socketio.on('delete_chat')
@@ -115,6 +123,11 @@ def handle_delete_chat(data):
     if os.path.exists(filepath):
         os.remove(filepath)
     socketio.emit('chat_deleted', {'chatId': chat_id}, to=request.sid)
+
+@socketio.on('stop_generation')
+def handle_stop_generation(data):
+    stop_generating[request.sid] = True
+    print(f"Stop request received for SID: {request.sid}")
 
 @socketio.on('message')
 def handle_message(data):
@@ -137,12 +150,17 @@ def handle_message(data):
         socketio.emit('chat_title_updated', {'chatId': chat_id, 'title': user_message[:50]})
 
     try:
+        stop_generating[request.sid] = False
         client = ollama.Client(host=OLLAMA_HOST)
         stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
 
         ai_response_content = ""
         first_chunk = True
         for chunk in stream:
+            if stop_generating.get(request.sid):
+                print(f"Stopping generation for SID: {request.sid}")
+                break
+
             chunk_content = chunk['message']['content']
             ai_response_content += chunk_content
             socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
@@ -155,6 +173,11 @@ def handle_message(data):
     except Exception as e:
         print(f"!!! ERROR communicating with Ollama: {e}")
         socketio.emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
+    
+    finally:
+        socketio.emit('response_end', {'chatId': chat_id}, to=request.sid)
+        if request.sid in stop_generating:
+            del stop_generating[request.sid]
 
 if __name__ == '__main__':
     if not os.path.exists(CHAT_SESSIONS_DIR):
