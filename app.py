@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 import eventlet
+from eventlet import tpool  # <-- Added this line
 from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
@@ -32,10 +33,11 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
+# --- vvv THIS ENTIRE FUNCTION HAS BEEN REPLACED vvv ---
 def search_the_web(query):
     """
-    Performs a web search using DuckDuckGo, formats the results, 
-    and fetches the content of the top result.
+    Performs a web search using DuckDuckGo, formats the results,
+    and fetches the content of the top result in an eventlet-friendly way.
     """
     print(f"Performing web search for: {query}")
     try:
@@ -50,10 +52,11 @@ def search_the_web(query):
                 try:
                     url = results[0]['href']
                     print(f"Fetching content from: {url}")
-                    # Use eventlet-friendly requests if available, or standard requests
-                    response = requests.get(url, timeout=5)
-                    response.raise_for_status()
                     
+                    # Use eventlet's thread pool to run the blocking requests.get call
+                    response = tpool.execute(requests.get, url, timeout=5)
+                    response.raise_for_status()
+
                     # Use BeautifulSoup to extract text content
                     soup = BeautifulSoup(response.content, 'lxml')
                     for script_or_style in soup(["script", "style"]):
@@ -78,6 +81,7 @@ def search_the_web(query):
     except Exception as e:
         print(f"Error during web search: {e}")
         return "An error occurred during the web search. Please try again later."
+# --- ^^^ THIS ENTIre FUNCTION HAS BEEN REPLACED ^^^ ---
 
 
 def load_chat_history(user_id, chat_id, use_internet=False):
