@@ -90,8 +90,9 @@ def search_the_web(query):
         # Concurrently fetch the top 3 results
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
-        # Use eventlet's tpool to run blocking I/O in separate threads
-        fetched_contents = list(tpool.imap(fetch_and_parse, urls_to_fetch))
+        # *** THIS IS THE CORRECTED LINE ***
+        # Use tpool.execute in a list comprehension to run fetches in parallel threads
+        fetched_contents = [tpool.execute(fetch_and_parse, url) for url in urls_to_fetch]
 
         # Prepare a structured context for the AI model
         context_parts = []
