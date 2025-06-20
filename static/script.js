@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
-    sendBtn.addEventListener('click', () => {
+    function sendMessage() {
         const message = messageInput.value.trim();
         if (message) {
             appendMessage('user', message);
@@ -47,6 +47,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 useInternet: internetSearchToggle.checked
             });
             messageInput.value = '';
+        }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+
+    messageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
         }
     });
 
