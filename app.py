@@ -11,17 +11,18 @@ from flask_socketio import SocketIO
 from flask_cors import CORS
 import ollama
 
-from serpapi import GoogleSearch
+from duckduckgo_search import DDGS
 
-def google_search(query):
-    params = {
-        "engine": "google",
-        "q": query,
-        "api_key": "4baec4537b665770fe031c0cdeebe713c1a09e88178bfea403e702f1ed72ad5a",
-    }
-    search = GoogleSearch(params)
-    results = search.get_dict()
-    return results['organic_results']
+def duckduckgo_search(query):
+    with DDGS() as ddgs:
+        results = []
+        for r in ddgs.text(query, max_results=5):
+            results.append({
+                'title': r.get('title', ''),
+                'link': r.get('href', ''),
+                'snippet': r.get('body', '')
+            })
+        return results
 
 
 app = Flask(__name__)
@@ -146,7 +147,7 @@ def handle_message(data):
             history.append({'role': 'assistant', 'content': ai_message}) # Save the search request
 
             try:
-                search_results = google_search(query)  # <- use your real search function!
+                search_results = duckduckgo_search(query)  # Use DuckDuckGo search function
                 search_context = ""
                 for item in search_results:
                     url = item.get('link')
