@@ -3,8 +3,9 @@ import json
 import uuid
 import eventlet
 import datetime
-import sys  # <-- Added this import
-from eventlet import tpool
+import sys
+# Replaced eventlet.tpool with Python's standard ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from duckduckgo_search import DDGS
 import requests
 from bs4 import BeautifulSoup
@@ -38,14 +39,9 @@ def get_chat_filepath(user_id, chat_id):
 
 def fetch_and_parse(url):
     """
-    Fetches content from a URL, raising the recursion limit to handle complex sites.
+    Fetches content from a URL, cleans it, and extracts text.
+    This function is now run in a standard thread pool to avoid library conflicts.
     """
-    # --- FINAL RECURSION FIX ---
-    # Temporarily increase the recursion limit for this function's scope.
-    # This is a direct workaround for websites with exceptionally deep HTML.
-    old_limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(5000)
-
     try:
         print(f"Fetching content from: {url}")
         headers = {
@@ -68,20 +64,16 @@ def fetch_and_parse(url):
             
         return text
 
-    except (requests.exceptions.RequestException, RecursionError) as e:
-        print(f"Request or parsing failed for {url}: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed for {url}: {e}")
         return None
     except Exception as e:
         print(f"An unexpected error occurred processing {url}: {e}")
         return None
-    finally:
-        # Restore the original recursion limit
-        sys.setrecursionlimit(old_limit)
 
 def search_the_web(query):
     """
-    Performs a web search, fetches content from top results concurrently,
-    and formats them for the language model.
+    Performs a web search, fetching content concurrently using standard threads.
     """
     print(f"Performing web search for: {query}")
     try:
@@ -93,7 +85,11 @@ def search_the_web(query):
 
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
-        fetched_contents = [tpool.execute(fetch_and_parse, url) for url in urls_to_fetch]
+        # Use a standard ThreadPoolExecutor to run scraping in isolated, standard threads.
+        # This prevents conflicts with eventlet's monkey-patching.
+        fetched_contents = []
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fetched_contents = list(executor.map(fetch_and_parse, urls_to_fetch))
 
         context_parts = []
         for i, content in enumerate(fetched_contents):
@@ -231,7 +227,7 @@ def handle_message(data):
 
         if normalized_message in time_query_triggers:
             ai_response_content = f"The current time is {time_str}."
-        else: # Covers all date_query_triggers
+        else:
             ai_response_content = f"Today is {date_str}."
         
         history.append({'role': 'user', 'content': user_message})
