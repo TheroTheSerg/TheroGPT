@@ -144,13 +144,15 @@ def handle_message(data):
         if search_match:
             query = search_match.group(1)
             history.append({'role': 'assistant', 'content': ai_message}) # Save the search request
-            
+
             try:
-                search_results = search(queries=[query])
+                search_results = google_search(query)  # <- use your real search function!
                 search_context = ""
-                for result in search_results:
-                    for item in result.results:
-                        search_context += f"URL: {item.url}\nTitle: {item.source_title}\nSnippet: {item.snippet}\n\n"
+                for item in search_results:
+                    url = item.get('link')
+                    title = item.get('title')
+                    snippet = item.get('snippet')
+                    search_context += f"URL: {url}\nTitle: {title}\nSnippet: {snippet}\n\n"
                 history.append({'role': 'tool', 'content': search_context})
             except Exception as e:
                 print(f"Error during Google Search: {e}")
