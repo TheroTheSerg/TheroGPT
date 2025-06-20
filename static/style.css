@@ -20,6 +20,7 @@ body, html {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background-color: var(--primary-bg);
     color: var(--text-primary);
+    overflow: hidden;
 }
 
 #app-container {
@@ -35,7 +36,8 @@ body, html {
     flex-direction: column;
     padding: 1rem;
     border-right: 1px solid var(--border-color);
-    flex-shrink: 0; /* Add this line to prevent the sidebar from shrinking */
+    flex-shrink: 0;
+    transition: transform 0.3s ease;
 }
 
 .sidebar-header h2 {
@@ -64,8 +66,6 @@ body, html {
     background-color: #454545;
 }
 
-/* --- Find and replace this whole block in static/style.css --- */
-
 #chat-list-nav {
     flex-grow: 1;
     overflow-y: auto;
@@ -81,12 +81,12 @@ body, html {
 .chat-list-item a {
     display: block;
     padding: 12px 10px;
-    color: var(--text-secondary); /* Default color for chat links */
-    text-decoration: none; /* Removes the underline */
+    color: var(--text-secondary);
+    text-decoration: none;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    border-radius: 6px; /* Match parent's border radius */
+    border-radius: 6px;
 }
 
 .chat-list-item:hover {
@@ -94,11 +94,11 @@ body, html {
 }
 
 .chat-list-item.active {
-    background-color: var(--accent-color); /* Blue background for active chat */
+    background-color: var(--accent-color);
 }
 
 .chat-list-item.active a {
-    color: white; /* White text for active chat */
+    color: white;
 }
 
 .delete-chat-button {
@@ -111,12 +111,12 @@ body, html {
     color: var(--text-secondary);
     font-size: 1.2rem;
     cursor: pointer;
-    display: none; /* Hide by default */
+    display: none;
     padding: 2px 5px;
 }
 
 .chat-list-item:hover .delete-chat-button {
-    display: block; /* Show on hover */
+    display: block;
 }
 
 .chat-list-item.active .delete-chat-button {
@@ -136,6 +136,32 @@ body, html {
     padding: 1rem 1.5rem;
     border-bottom: 1px solid var(--border-color);
     background-color: var(--primary-bg);
+    display: flex;
+    align-items: center;
+}
+
+.sidebar-toggle {
+    display: none;
+    flex-direction: column;
+    justify-content: space-around;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    z-index: 10;
+    margin-right: 15px;
+}
+
+.sidebar-toggle span {
+    width: 24px;
+    height: 2px;
+    background-color: var(--text-primary);
+    border-radius: 10px;
+    transition: all 0.3s linear;
+    position: relative;
+    transform-origin: 1px;
 }
 
 #chat-container {
@@ -146,6 +172,8 @@ body, html {
     flex-direction: column;
 }
 
+/* ... (rest of the original CSS) ... */
+
 /* --- Message Bubbles --- */
 .message-bubble {
     max-width: 80%;
@@ -154,7 +182,6 @@ body, html {
     margin-bottom: 12px;
     line-height: 1.5;
     word-wrap: break-word;
-    /* NO ANIMATION - ensures visibility */
     opacity: 1;
     transform: translateY(0);
 }
@@ -216,34 +243,33 @@ body, html {
     background-color: var(--accent-hover);
 }
 
-.icon {
-    width: 24px;
-    height: 24px;
-    color: white;
-}
+/* --- Mobile Optimization --- */
+@media (max-width: 768px) {
+    #app-container {
+        flex-direction: column;
+        overflow: hidden;
+    }
 
-/* --- Typing Indicator --- */
-#typing-indicator {
-    display: flex;
-    align-items: center;
-    margin-bottom: 10px;
-    padding-left: 10px;
-}
+    .sidebar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 260px;
+        transform: translateX(-100%);
+        z-index: 5;
+        border-right: none;
+    }
 
-#typing-indicator span {
-    height: 8px;
-    width: 8px;
-    margin: 0 2px;
-    background-color: var(--text-secondary);
-    border-radius: 50%;
-    display: inline-block;
-    animation: bounce 1.4s infinite ease-in-out both;
-}
+    .sidebar.open {
+        transform: translateX(0);
+    }
 
-#typing-indicator span:nth-of-type(1) { animation-delay: -0.32s; }
-#typing-indicator span:nth-of-type(2) { animation-delay: -0.16s; }
+    .sidebar-toggle {
+        display: flex;
+    }
 
-@keyframes bounce {
-    0%, 80%, 100% { transform: scale(0); }
-    40% { transform: scale(1.0); }
+    .chat-area {
+        width: 100%;
+    }
 }
