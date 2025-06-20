@@ -105,7 +105,7 @@ def handle_new_chat(data):
     user_id = data.get('userId')
     if not user_id: return
     chat_id = str(uuid.uuid4())
-    save__chat_history(user_id, chat_id, [])
+    save_chat_history(user_id, chat_id, []) # <--- TYPO FIXED HERE
     socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
 
 @socketio.on('delete_chat')
