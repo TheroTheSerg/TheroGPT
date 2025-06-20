@@ -175,7 +175,8 @@ def handle_message(data):
         socketio.emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
     
     finally:
-        socketio.emit('response_end', {'chatId': chat_id}, to=request.sid)
+        status = 'stopped' if stop_generating.get(request.sid) else 'completed'
+        socketio.emit('response_end', {'chatId': chat_id, 'status': status}, to=request.sid)
         if request.sid in stop_generating:
             del stop_generating[request.sid]
 

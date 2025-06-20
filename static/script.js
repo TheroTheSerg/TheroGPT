@@ -35,6 +35,20 @@ document.addEventListener('DOMContentLoaded', () => {
         internetSearchToggle.disabled = responding;
     }
 
+    function showThinkingIndicator(show) {
+        const existingIndicator = chatWindow.querySelector('.thinking-indicator');
+        if (existingIndicator) {
+            existingIndicator.remove();
+        }
+        if (show) {
+            const indicatorElement = document.createElement('div');
+            indicatorElement.classList.add('message', 'assistant', 'thinking-indicator');
+            indicatorElement.textContent = 'TheroGPT is thinking...';
+            chatWindow.appendChild(indicatorElement);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+    }
+
     function createChatElement(chat) {
         const chatElement = document.createElement('div');
         chatElement.classList.add('chat-item');
@@ -75,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (message && !isResponding) {
             appendMessage('user', message);
             setRespondingState(true);
+            showThinkingIndicator(true);
             socket.emit('message', { 
                 userId, 
                 chatId: currentChatId, 
@@ -149,6 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.chatId !== currentChatId) return;
 
         if (data.first_chunk) {
+            showThinkingIndicator(false);
             currentResponseContent = '';
             appendMessage('assistant', '...', true);
         }
@@ -164,7 +180,16 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.on('response_end', (data) => {
         if (data.chatId === currentChatId) {
             const lastMessage = chatWindow.querySelector('.message.assistant.streaming');
-            if(lastMessage) lastMessage.classList.remove('streaming');
+            if (lastMessage) {
+                lastMessage.classList.remove('streaming');
+                if (data.status === 'stopped') {
+                    const stoppedIndicator = document.createElement('span');
+                    stoppedIndicator.style.color = '#999';
+                    stoppedIndicator.style.fontStyle = 'italic';
+                    stoppedIndicator.textContent = ' [Stopped by user]';
+                    lastMessage.querySelector('div').appendChild(stoppedIndicator);
+                }
+            }
             setRespondingState(false);
         }
     });
@@ -177,6 +202,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     socket.on('response_error', (data) => {
+        showThinkingIndicator(false);
         appendMessage('assistant', `Error: ${data.error}`);
+        setRespondingState(false);
     });
 });
