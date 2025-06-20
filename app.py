@@ -34,7 +34,6 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-
 def fetch_and_parse(url):
     """
     Fetches content from a URL, cleans it, and extracts text.
@@ -45,36 +44,38 @@ def fetch_and_parse(url):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(url, timeout=5, headers=headers)
+        # Increased timeout for potentially slow sites
+        response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
 
-        if 'text/html' not in response.headers.get('Content-Type', ''):
+        content_type = response.headers.get('Content-Type', '')
+        if 'text/html' not in content_type:
             print(f"Skipping non-HTML content at {url}")
             return None
         
-        soup = BeautifulSoup(response.content, 'lxml')
+        # --- FINAL FIX ---
+        # Switch to Python's built-in 'html.parser'. It is more lenient and robust 
+        # against the kind of complex or malformed HTML that causes recursion errors.
+        soup = BeautifulSoup(response.content, 'html.parser')
         
-        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form']):
+        # Remove tags that are unlikely to contain useful content
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'link', 'meta']):
             tag.decompose()
         
-        main_content = soup.find('main') or soup.find('article') or soup.body
-        if main_content:
-            # --- FIX FOR RECURSION ERROR ---
-            # Instead of a deep recursive call, find all individual text nodes and join them.
-            # This is less likely to hit Python's recursion depth limit on complex HTML.
-            text_nodes = main_content.find_all(string=True)
-            text = "\n".join(t.strip() for t in text_nodes if t.parent.name not in ['script', 'style'])
-            # --- END OF FIX ---
+        # Extract text from the body, which is a safer and more direct approach
+        if soup.body:
+            text = soup.body.get_text(separator=' ', strip=True)
         else:
-            return None
-        
+            # Fallback if no body tag is found
+            text = soup.get_text(separator=' ', strip=True)
+            
         return text
 
     except (requests.exceptions.RequestException, RecursionError) as e:
         print(f"Request or parsing failed for {url}: {e}")
         return None
     except Exception as e:
-        print(f"Error processing {url}: {e}")
+        print(f"An unexpected error occurred processing {url}: {e}")
         return None
 
 def search_the_web(query):
@@ -92,7 +93,6 @@ def search_the_web(query):
 
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
-        # Using tpool to run fetch_and_parse concurrently
         fetched_contents = [tpool.execute(fetch_and_parse, url) for url in urls_to_fetch]
 
         context_parts = []
@@ -215,7 +215,7 @@ def handle_message(data):
     history = load_chat_history(user_id, chat_id, use_internet)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
     
-    # --- vvv REVISED: DIRECTLY HANDLE SPECIFIC DATE/TIME QUERIES vvv ---
+    # --- REVISED: DIRECTLY HANDLE SPECIFIC DATE/TIME QUERIES ---
     time_query_triggers = [
         'what time is it', 'what is the time', 'current time', 'time', "what's the time"
     ]
@@ -241,11 +241,10 @@ def handle_message(data):
         emit('response', {'content': ai_response_content, 'first_chunk': True, 'chatId': chat_id}, to=request.sid)
         emit('response_end', {'chatId': chat_id, 'status': 'completed'}, to=request.sid)
         return
-    # --- ^^^ END OF REVISED DATE/TIME HANDLING ^^^ ---
+    # --- END OF REVISED DATE/TIME HANDLING ---
 
     if use_internet:
         search_results = search_the_web(user_message)
-        # We now add the search results as a new system message before the user's message
         history.append({'role': 'system', 'content': f"Web search results:\n{search_results}"})
 
     history.append({'role': 'user', 'content': user_message})
@@ -256,7 +255,6 @@ def handle_message(data):
     try:
         stop_generating[request.sid] = False
         client = ollama.Client(host=OLLAMA_HOST)
-        # The history passed to the model now includes the latest search results
         stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
 
         ai_response_content = ""
@@ -272,11 +270,9 @@ def handle_message(data):
             if first_chunk:
                 first_chunk = False
         
-        # Save the AI's response to the history
-        if ai_response_content: # Only append if there was a response
+        if ai_response_content:
              history.append({'role': 'assistant', 'content': ai_response_content})
         
-        # Clean up history by removing search results before saving
         history_to_save = [msg for msg in history if not (msg['role'] == 'system' and msg.get('content', '').startswith('Web search results'))]
         save_chat_history(user_id, chat_id, history_to_save)
 
