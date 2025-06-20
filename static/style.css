@@ -188,3 +188,13 @@ body {
     color: #a0a0a0;
     cursor: pointer;
 }
+
+.sidebar {
+    width: 260px;
+    background-color: #202123;
+    display: flex;
+    flex-direction: column;
+    padding: 1rem;
+    border-right: 1px solid #363739;
+    flex-shrink: 0; /* Add this line */
+}

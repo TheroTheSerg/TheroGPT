@@ -6,6 +6,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const newChatBtn = document.getElementById('new-chat-btn');
     const chatList = document.getElementById('chat-list');
     const internetSearchToggle = document.getElementById('internet-search-toggle');
+    const converter = new showdown.Converter({
+        omitExtraWLInCodeBlocks: true,
+        simplifiedAutoLink: true,
+        strikethrough: true,
+        tables: true,
+        tasklists: true,
+        simpleLineBreaks: true
+    });
 
     let userId = localStorage.getItem('userId');
     if (!userId) {
@@ -14,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let currentChatId = null;
+    let currentResponseContent = '';
 
     function createChatElement(chat) {
         const chatElement = document.createElement('div');
@@ -22,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chatElement.textContent = chat.title;
         chatElement.addEventListener('click', () => {
             currentChatId = chat.id;
+            currentResponseContent = ''; // Reset content buffer
             chatWindow.innerHTML = '';
             socket.emit('get_history', { userId, chatId: chat.id });
         });
@@ -31,7 +41,11 @@ document.addEventListener('DOMContentLoaded', () => {
     function appendMessage(sender, text) {
         const messageElement = document.createElement('div');
         messageElement.classList.add('message', sender);
-        messageElement.textContent = text;
+        if (sender === 'assistant') {
+            messageElement.innerHTML = converter.makeHtml(text);
+        } else {
+            messageElement.textContent = text;
+        }
         chatWindow.appendChild(messageElement);
         chatWindow.scrollTop = chatWindow.scrollHeight;
     }
@@ -47,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 useInternet: internetSearchToggle.checked
             });
             messageInput.value = '';
+            messageInput.style.height = 'auto'; // Reset height after sending
         }
     }
 
@@ -57,6 +72,11 @@ document.addEventListener('DOMContentLoaded', () => {
             event.preventDefault();
             sendMessage();
         }
+    });
+    
+    messageInput.addEventListener('input', () => {
+        messageInput.style.height = 'auto';
+        messageInput.style.height = (messageInput.scrollHeight) + 'px';
     });
 
     newChatBtn.addEventListener('click', () => {
@@ -73,13 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
         data.chats.forEach(chat => {
             chatList.appendChild(createChatElement(chat));
         });
+        if (!currentChatId && data.chats.length > 0) {
+            data.chats[0] && chatList.children[0].click();
+        }
     });
 
     socket.on('chat_created', (data) => {
         const chatElement = createChatElement(data);
         chatList.prepend(chatElement);
-        currentChatId = data.id;
-        chatWindow.innerHTML = '';
+        currentResponseContent = ''; // Reset content buffer
+        chatElement.click();
     });
 
     socket.on('chat_history', (data) => {
@@ -90,14 +113,21 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     socket.on('response', (data) => {
+        if (data.chatId !== currentChatId) {
+            return; // Ignore responses for non-active chats
+        }
+
         if (data.first_chunk) {
+            currentResponseContent = ''; // Reset for a new response
             const assistantMessage = document.createElement('div');
             assistantMessage.classList.add('message', 'assistant');
             chatWindow.appendChild(assistantMessage);
         }
+        
         const lastMessage = chatWindow.querySelector('.message.assistant:last-child');
         if (lastMessage) {
-            lastMessage.textContent += data.content;
+            currentResponseContent += data.content;
+            lastMessage.innerHTML = converter.makeHtml(currentResponseContent);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
     });
