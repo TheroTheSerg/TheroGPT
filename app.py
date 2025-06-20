@@ -2,6 +2,8 @@ import os
 import json
 import uuid
 import eventlet
+from duckduckgo_search import DDGS
+
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, request
@@ -15,9 +17,10 @@ socketio = SocketIO(app, async_mode='eventlet')
 
 # --- Configuration ---
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma2:2b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
-SYSTEM_PROMPT = "You are TheroGPT, a helpful AI assistant. You do NOT have access to the internet or live search results."
+SYSTEM_PROMPT_DEFAULT = "You are TheroGPT, a helpful AI assistant. You do NOT have access to the internet or live search results."
+SYSTEM_PROMPT_WEB = "You are TheroGPT, a helpful AI assistant. You have been provided with a series of web search results. Please use them to answer the user's query."
 
 # --- Helper Functions ---
 
@@ -25,21 +28,31 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
-def load_chat_history(user_id, chat_id):
+def search_the_web(query):
+    try:
+        results = DDGS().text(query, max_results=5)
+        return "\n\n".join([f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}" for r in results])
+    except Exception as e:
+        print(f"Error during web search: {e}")
+        return "An error occurred while searching the web."
+
+def load_chat_history(user_id, chat_id, use_internet=False):
     filepath = get_chat_filepath(user_id, chat_id)
+    system_prompt = SYSTEM_PROMPT_WEB if use_internet else SYSTEM_PROMPT_DEFAULT
     if not os.path.exists(filepath):
-        return []
+        return [{'role': 'system', 'content': system_prompt}]
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
-            # Start with the system prompt if the history is empty or doesn't have it
             history = json.loads(content) if content else []
             if not history or history[0].get('role') != 'system':
-                history.insert(0, {'role': 'system', 'content': SYSTEM_PROMPT})
+                history.insert(0, {'role': 'system', 'content': system_prompt})
+            else:
+                history[0]['content'] = system_prompt # Update system prompt
             return history
     except (json.JSONDecodeError, IOError) as e:
         print(f"Error loading chat history for {chat_id}: {e}")
-        return [{'role': 'system', 'content': SYSTEM_PROMPT}]
+        return [{'role': 'system', 'content': system_prompt}]
 
 def save_chat_history(user_id, chat_id, history):
     filepath = get_chat_filepath(user_id, chat_id)
@@ -49,6 +62,7 @@ def save_chat_history(user_id, chat_id, history):
             json.dump(history, f, indent=4, ensure_ascii=False)
     except IOError as e:
         print(f"Error saving chat history for {chat_id}: {e}")
+
 
 # --- Socket.IO Event Handlers ---
 
@@ -83,7 +97,6 @@ def handle_get_chats(data):
 def handle_get_history(data):
     user_id, chat_id = data.get('userId'), data.get('chatId')
     history = load_chat_history(user_id, chat_id)
-    # Don't show the system prompt to the user
     display_history = [msg for msg in history if msg['role'] != 'system']
     socketio.emit('chat_history', {'chatId': chat_id, 'history': display_history}, to=request.sid)
 
@@ -92,7 +105,7 @@ def handle_new_chat(data):
     user_id = data.get('userId')
     if not user_id: return
     chat_id = str(uuid.uuid4())
-    save_chat_history(user_id, chat_id, [])
+    save__chat_history(user_id, chat_id, [])
     socketio.emit('chat_created', {'id': chat_id, 'title': 'New Chat'}, to=request.sid)
 
 @socketio.on('delete_chat')
@@ -105,9 +118,17 @@ def handle_delete_chat(data):
 
 @socketio.on('message')
 def handle_message(data):
-    user_id, chat_id, user_message = data.get('userId'), data.get('chatId'), data.get('message')
-    history = load_chat_history(user_id, chat_id)
+    user_id = data.get('userId')
+    chat_id = data.get('chatId')
+    user_message = data.get('message')
+    use_internet = data.get('useInternet', False)
+
+    history = load_chat_history(user_id, chat_id, use_internet)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
+
+    if use_internet:
+        search_results = search_the_web(user_message)
+        history.append({'role': 'system', 'content': f"Web search results:\n{search_results}"})
 
     history.append({'role': 'user', 'content': user_message})
     save_chat_history(user_id, chat_id, history)

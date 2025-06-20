@@ -7,38 +7,24 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <div id="app-container">
+    <div class="container">
         <div class="sidebar">
-            <div class="sidebar-header">
-                <h2>Chats</h2>
-            </div>
-            <button class="sidebar-button" id="new-chat-btn">New Chat</button>
-            <nav id="chat-list-nav">
-                <ul id="chat-list">
-                    </ul>
-            </nav>
+            <button id="new-chat-btn">New Chat</button>
+            <div id="chat-list"></div>
         </div>
-        <div class="chat-area">
-            <header class="app-header">
-                <button class="sidebar-toggle" id="sidebar-toggle-btn">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </button>
-                <h3>TheroGPT</h3>
-            </header>
-            <div id="chat-container">
+        <div class="main-content">
+            <div id="chat-window"></div>
+            <div class="chat-input">
+                <div class="internet-toggle">
+                    <input type="checkbox" id="internet-search-toggle">
+                    <label for="internet-search-toggle">Search with Internet</label>
                 </div>
-            <div id="form-container">
-                <form id="message-form">
-                    <textarea id="message-input" placeholder="Message TheroGPT..." required></textarea>
-                    <button type="submit" id="send-button">Send</button>
-                </form>
+                <textarea id="message-input" placeholder="Type your message..."></textarea>
+                <button id="send-btn">Send</button>
             </div>
         </div>
     </div>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
