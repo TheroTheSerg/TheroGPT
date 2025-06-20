@@ -3,12 +3,12 @@ import json
 import uuid
 import eventlet
 import datetime
-import sys
-# Replaced eventlet.tpool with Python's standard ThreadPoolExecutor
-from concurrent.futures import ThreadPoolExecutor
+import re  # <-- Added re
+from concurrent.futures import ThreadPoolExecutor # <-- Kept for concurrency
 from duckduckgo_search import DDGS
 import requests
-from bs4 import BeautifulSoup
+# BeautifulSoup is no longer used
+# from bs4 import BeautifulSoup
 
 eventlet.monkey_patch()
 
@@ -39,8 +39,7 @@ def get_chat_filepath(user_id, chat_id):
 
 def fetch_and_parse(url):
     """
-    Fetches content from a URL, cleans it, and extracts text.
-    This function is now run in a standard thread pool to avoid library conflicts.
+    Fetches content and extracts text using regular expressions to avoid recursion errors.
     """
     try:
         print(f"Fetching content from: {url}")
@@ -54,14 +53,19 @@ def fetch_and_parse(url):
         if 'text/html' not in content_type:
             print(f"Skipping non-HTML content at {url}")
             return None
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'link', 'meta', 'noscript']):
-            tag.decompose()
-        
-        text = ' '.join(soup.stripped_strings)
-            
+
+        # --- REGEX-BASED HTML STRIPPING ---
+        html = response.text
+
+        # 1. Remove script and style tags and their content
+        html = re.sub(r'<(script|style).*?>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        # 2. Remove all remaining HTML tags, replacing them with a space
+        text = re.sub(r'<[^>]+>', ' ', html)
+        # 3. Decode common HTML entities
+        text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+        # 4. Consolidate whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+
         return text
 
     except requests.exceptions.RequestException as e:
@@ -85,8 +89,6 @@ def search_the_web(query):
 
         urls_to_fetch = [r['href'] for r in results[:3] if 'href' in r]
         
-        # Use a standard ThreadPoolExecutor to run scraping in isolated, standard threads.
-        # This prevents conflicts with eventlet's monkey-patching.
         fetched_contents = []
         with ThreadPoolExecutor(max_workers=3) as executor:
             fetched_contents = list(executor.map(fetch_and_parse, urls_to_fetch))
