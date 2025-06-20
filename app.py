@@ -34,17 +34,16 @@ def get_chat_filepath(user_id, chat_id):
     user_dir = os.path.join(CHAT_SESSIONS_DIR, user_id)
     return os.path.join(user_dir, f"{chat_id}.json")
 
+
 def fetch_and_parse(url):
     """
-    Fetches content from a URL, cleans it, and extracts text.
-    This function is run in a thread pool to avoid blocking the server.
+    Fetches content from a URL, cleans it, and extracts text using a robust, non-recursive method.
     """
     try:
         print(f"Fetching content from: {url}")
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # Increased timeout for potentially slow sites
         response = requests.get(url, timeout=10, headers=headers)
         response.raise_for_status()
 
@@ -53,29 +52,25 @@ def fetch_and_parse(url):
             print(f"Skipping non-HTML content at {url}")
             return None
         
-        # --- FINAL FIX ---
-        # Switch to Python's built-in 'html.parser'. It is more lenient and robust 
-        # against the kind of complex or malformed HTML that causes recursion errors.
+        # --- ROBUST FIX ---
+        # Use the lenient 'html.parser'
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Remove tags that are unlikely to contain useful content
-        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'link', 'meta']):
+        # Decompose irrelevant tags first
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'link', 'meta', 'noscript']):
             tag.decompose()
         
-        # Extract text from the body, which is a safer and more direct approach
-        if soup.body:
-            text = soup.body.get_text(separator=' ', strip=True)
-        else:
-            # Fallback if no body tag is found
-            text = soup.get_text(separator=' ', strip=True)
+        # Use .stripped_strings which is a generator and thus non-recursive.
+        # This is the most robust way to avoid recursion errors on complex HTML.
+        text = ' '.join(soup.stripped_strings)
             
         return text
 
-    except (requests.exceptions.RequestException, RecursionError) as e:
-        print(f"Request or parsing failed for {url}: {e}")
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed for {url}: {e}")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred processing {url}: {e}")
+        print(f"Parsing or other unexpected error for {url}: {e}")
         return None
 
 def search_the_web(query):
@@ -220,7 +215,8 @@ def handle_message(data):
         'what time is it', 'what is the time', 'current time', 'time', "what's the time"
     ]
     date_query_triggers = [
-        "what's today's date", 'what is the date', 'what is today', 'date', 'today'
+        "what's today's date", "what is todays date", "what is today's date", 
+        'what is the date', 'what is today', 'date', 'today'
     ]
     normalized_message = user_message.lower().strip().rstrip('?').strip()
 
