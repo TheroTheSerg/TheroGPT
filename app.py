@@ -3,6 +3,7 @@ import json
 import uuid
 import eventlet
 import datetime
+import sys  # <-- Added this import
 from eventlet import tpool
 from duckduckgo_search import DDGS
 import requests
@@ -37,8 +38,14 @@ def get_chat_filepath(user_id, chat_id):
 
 def fetch_and_parse(url):
     """
-    Fetches content from a URL, cleans it, and extracts text using a robust, non-recursive method.
+    Fetches content from a URL, raising the recursion limit to handle complex sites.
     """
+    # --- FINAL RECURSION FIX ---
+    # Temporarily increase the recursion limit for this function's scope.
+    # This is a direct workaround for websites with exceptionally deep HTML.
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(5000)
+
     try:
         print(f"Fetching content from: {url}")
         headers = {
@@ -52,26 +59,24 @@ def fetch_and_parse(url):
             print(f"Skipping non-HTML content at {url}")
             return None
         
-        # --- ROBUST FIX ---
-        # Use the lenient 'html.parser'
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Decompose irrelevant tags first
         for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside', 'form', 'link', 'meta', 'noscript']):
             tag.decompose()
         
-        # Use .stripped_strings which is a generator and thus non-recursive.
-        # This is the most robust way to avoid recursion errors on complex HTML.
         text = ' '.join(soup.stripped_strings)
             
         return text
 
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed for {url}: {e}")
+    except (requests.exceptions.RequestException, RecursionError) as e:
+        print(f"Request or parsing failed for {url}: {e}")
         return None
     except Exception as e:
-        print(f"Parsing or other unexpected error for {url}: {e}")
+        print(f"An unexpected error occurred processing {url}: {e}")
         return None
+    finally:
+        # Restore the original recursion limit
+        sys.setrecursionlimit(old_limit)
 
 def search_the_web(query):
     """
@@ -210,7 +215,6 @@ def handle_message(data):
     history = load_chat_history(user_id, chat_id, use_internet)
     is_first_user_message = not any(msg['role'] == 'user' for msg in history)
     
-    # --- REVISED: DIRECTLY HANDLE SPECIFIC DATE/TIME QUERIES ---
     time_query_triggers = [
         'what time is it', 'what is the time', 'current time', 'time', "what's the time"
     ]
@@ -237,7 +241,6 @@ def handle_message(data):
         emit('response', {'content': ai_response_content, 'first_chunk': True, 'chatId': chat_id}, to=request.sid)
         emit('response_end', {'chatId': chat_id, 'status': 'completed'}, to=request.sid)
         return
-    # --- END OF REVISED DATE/TIME HANDLING ---
 
     if use_internet:
         search_results = search_the_web(user_message)
