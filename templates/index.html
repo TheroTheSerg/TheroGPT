@@ -4,27 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TheroGPT</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
-        <div class="sidebar">
-            <button id="new-chat-btn">New Chat</button>
-            <div id="chat-list"></div>
-        </div>
-        <div class="main-content">
-            <div id="chat-window"></div>
-            <div class="chat-input">
-                <div class="internet-toggle">
-                    <input type="checkbox" id="internet-search-toggle">
-                    <label for="internet-search-toggle">Search with Internet</label>
+        <aside class="sidebar">
+            <header class="sidebar-header">
+                <h1 class="logo">TheroGPT</h1>
+                <button id="new-chat-btn" class="new-chat-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                    <span>New Chat</span>
+                </button>
+            </header>
+            <nav id="chat-list" class="chat-list"></nav>
+        </aside>
+        <main class="main-content">
+            <div id="chat-window" class="chat-window">
                 </div>
-                <div class="input-row">
-                    <textarea id="message-input" placeholder="Type your message..."></textarea>
-                    <button id="send-btn">Send</button>
+            <footer class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <textarea id="message-input" placeholder="Message TheroGPT..."></textarea>
+                    <button id="send-btn" class="send-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="m22 2-11 11"/></svg>
+                    </button>
                 </div>
-            </div>
-        </div>
+                <div class="chat-options">
+                    <label class="internet-toggle">
+                        <input type="checkbox" id="internet-search-toggle">
+                        <span>Search with Internet</span>
+                    </label>
+                </div>
+            </footer>
+        </main>
     </div>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ url_for('static', filename='script.js') }}"></script>
