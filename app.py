@@ -10,7 +10,18 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import ollama
-from googlesearch import search
+
+from serpapi import GoogleSearch
+
+def google_search(query):
+    params = {
+        "engine": "google",
+        "q": query,
+        "api_key": "4baec4537b665770fe031c0cdeebe713c1a09e88178bfea403e702f1ed72ad5a",
+    }
+    search = GoogleSearch(params)
+    results = search.get_dict()
+    return results['organic_results']
 
 
 app = Flask(__name__)
