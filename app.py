@@ -1,8 +1,6 @@
 import os
 import json
 import uuid
-import traceback
-import re
 import eventlet
 eventlet.monkey_patch()
 
@@ -10,20 +8,6 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import ollama
-
-from duckduckgo_search import DDGS
-
-def duckduckgo_search(query):
-    with DDGS() as ddgs:
-        results = []
-        for r in ddgs.text(query, max_results=5):
-            results.append({
-                'title': r.get('title', ''),
-                'link': r.get('href', ''),
-                'snippet': r.get('body', '')
-            })
-        return results
-
 
 app = Flask(__name__)
 CORS(app)
@@ -33,9 +17,7 @@ socketio = SocketIO(app, async_mode='eventlet')
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3:8b")
 CHAT_SESSIONS_DIR = 'chat_sessions'
-SYSTEM_PROMPT = """You are TheroGPT, a helpful AI assistant. You have the ability to search the internet for current information.
-To search the internet, output `[search: QUERY]` where QUERY is what you want to search for.
-You will be provided with the search results, and you can then use them to answer the user's question."""
+SYSTEM_PROMPT = "You are TheroGPT, a helpful AI assistant."
 
 # --- Helper Functions ---
 
@@ -135,61 +117,22 @@ def handle_message(data):
 
     try:
         client = ollama.Client(host=OLLAMA_HOST)
+        stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
 
-        # First, get the AI's response to see if it wants to search
-        initial_response = client.chat(model=OLLAMA_MODEL, messages=history, stream=False)
-        ai_message = initial_response['message']['content']
+        ai_response_content = ""
+        first_chunk = True
+        for chunk in stream:
+            chunk_content = chunk['message']['content']
+            ai_response_content += chunk_content
+            socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
+            if first_chunk:
+                first_chunk = False
 
-        search_match = re.search(r'\[search:\s*(.*)\]', ai_message)
-
-        if search_match:
-            query = search_match.group(1)
-            history.append({'role': 'assistant', 'content': ai_message}) # Save the search request
-
-            try:
-                search_results = duckduckgo_search(query)  # Use DuckDuckGo search function
-                search_context = ""
-                for item in search_results:
-                    url = item.get('link')
-                    title = item.get('title')
-                    snippet = item.get('snippet')
-                    search_context += f"URL: {url}\nTitle: {title}\nSnippet: {snippet}\n\n"
-                history.append({'role': 'tool', 'content': search_context})
-            except Exception as e:
-                traceback.print_exc()  # Add this!
-                print(f"Error during Google Search: {e}")
-                history.append({'role': 'tool', 'content': 'There was an error while searching the internet.'})
-
-            # Now, get the final answer with the search results
-            stream = client.chat(model=OLLAMA_MODEL, messages=history, stream=True)
-            ai_response_content = ""
-            first_chunk = True
-            for chunk in stream:
-                chunk_content = chunk['message']['content']
-                ai_response_content += chunk_content
-                socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
-                if first_chunk:
-                    first_chunk = False
-
-            history.append({'role': 'assistant', 'content': ai_response_content})
-            save_chat_history(user_id, chat_id, history)
-        else:
-            # If no search is needed, just stream the initial response
-            ai_response_content = ""
-            first_chunk = True
-            for chunk in [initial_response]:
-                chunk_content = chunk['message']['content']
-                ai_response_content += chunk_content
-                socketio.emit('response', {'content': chunk_content, 'first_chunk': first_chunk, 'chatId': chat_id}, to=request.sid)
-                if first_chunk:
-                    first_chunk = False
-
-            history.append({'role': 'assistant', 'content': ai_response_content})
-            save_chat_history(user_id, chat_id, history)
+        history.append({'role': 'assistant', 'content': ai_response_content})
+        save_chat_history(user_id, chat_id, history)
 
     except Exception as e:
         print(f"!!! ERROR communicating with Ollama: {e}")
-        traceback.print_exc()
         socketio.emit('response_error', {'error': "Sorry, I couldn't connect to the AI model. Please ensure Ollama is running."}, to=request.sid)
 
 if __name__ == '__main__':
