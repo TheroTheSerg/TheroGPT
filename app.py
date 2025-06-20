@@ -3,6 +3,8 @@ import json
 import uuid
 import eventlet
 from duckduckgo_search import DDGS
+import requests
+from bs4 import BeautifulSoup
 
 eventlet.monkey_patch()
 
@@ -32,7 +34,8 @@ def get_chat_filepath(user_id, chat_id):
 
 def search_the_web(query):
     """
-    Performs a web search using DuckDuckGo, formats the results, and handles errors.
+    Performs a web search using DuckDuckGo, formats the results, 
+    and fetches the content of the top result.
     """
     print(f"Performing web search for: {query}")
     try:
@@ -40,7 +43,27 @@ def search_the_web(query):
             results = list(ddgs.text(query, max_results=5))
             if not results:
                 return "No search results found."
-            
+
+            # Fetch content from the first result
+            top_result_content = ""
+            if results and results[0].get('href'):
+                try:
+                    url = results[0]['href']
+                    print(f"Fetching content from: {url}")
+                    # Use eventlet-friendly requests if available, or standard requests
+                    response = requests.get(url, timeout=5)
+                    response.raise_for_status()
+                    
+                    # Use BeautifulSoup to extract text content
+                    soup = BeautifulSoup(response.content, 'lxml')
+                    for script_or_style in soup(["script", "style"]):
+                        script_or_style.decompose()
+                    text = soup.get_text(separator='\n', strip=True)
+                    top_result_content = f"\n\n--- Content from Top Result ---\n{text[:2000]}\n--- End of Content ---"
+                except Exception as e:
+                    print(f"Error fetching content from {results[0]['href']}: {e}")
+                    top_result_content = "\n\n[Could not fetch content from the top result.]"
+
             # Enumerate and format the results for clarity
             formatted_results = []
             for i, r in enumerate(results, 1):
@@ -49,10 +72,13 @@ def search_the_web(query):
                     f"Snippet: {r.get('body', 'N/A')}\n"
                     f"URL: {r.get('href', 'N/A')}"
                 )
-            return "\n\n".join(formatted_results)
+            
+            return "\n\n".join(formatted_results) + top_result_content
+
     except Exception as e:
         print(f"Error during web search: {e}")
         return "An error occurred during the web search. Please try again later."
+
 
 def load_chat_history(user_id, chat_id, use_internet=False):
     filepath = get_chat_filepath(user_id, chat_id)
