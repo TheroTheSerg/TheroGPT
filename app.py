@@ -1,7 +1,6 @@
 import os
 import json
 import uuid
-import eventlet
 import datetime
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +8,12 @@ from duckduckgo_search import DDGS
 import requests
 import html2text
 
-eventlet.monkey_patch()
+try:
+    import eventlet
+    eventlet.monkey_patch()
+    ASYNC_MODE = 'eventlet'
+except ModuleNotFoundError:
+    ASYNC_MODE = 'threading'
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
@@ -18,7 +22,7 @@ import ollama
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, async_mode='eventlet')
+socketio = SocketIO(app, async_mode=ASYNC_MODE)
 
 # --- Configuration ---
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
